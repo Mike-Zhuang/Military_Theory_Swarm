@@ -16,8 +16,11 @@ venv/
 
 # ML generated artifacts
 ml-module/data/generated/
+ml-module/data/visdrone/
+ml-module/data/visdrone-ready/
 ml-module/checkpoints/
 ml-module/reports/
+ml-module/runs/
 ml-module/.matplotlib-cache/
 ml-module/.cache/
 
@@ -30,11 +33,9 @@ docs/.cache/
 sim-core/class-confidence.json
 
 # Scenario exports (keep one default sample)
+web-demo/public/generated/*.json
 web-demo/public/scenarios/*.json
 !web-demo/public/scenarios/demo-compare.json
-!web-demo/public/scenarios/recon-coverage-compare.json
-!web-demo/public/scenarios/jam-recovery-compare.json
-!web-demo/public/scenarios/multi-target-allocation-compare.json
 
 # VS Code local logs
 .vscode/*.log

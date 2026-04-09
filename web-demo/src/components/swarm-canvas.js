@@ -139,6 +139,48 @@ export class SwarmCanvas {
     ctx.restore();
   }
 
+  drawLegend(viewport) {
+    const { ctx } = this;
+    const left = viewport.x + viewport.width - 220;
+    const top = viewport.y + 10;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(11, 30, 42, 0.78)";
+    ctx.fillRect(left, top, 210, 112);
+    ctx.strokeStyle = "rgba(147, 206, 229, 0.3)";
+    ctx.strokeRect(left, top, 210, 112);
+
+    ctx.font = "11px IBM Plex Mono";
+    ctx.fillStyle = "#9cc6d7";
+    ctx.fillText("图例", left + 10, top + 16);
+
+    const rows = [
+      ["#4ecdc4", "Agent"],
+      ["#f4b942", "Vehicle Target"],
+      ["#ff6b6b", "Decoy Target"],
+      ["#8aa7b5", "Civilian Target"],
+      ["#596c75", "Fail-safe Agent"],
+    ];
+    rows.forEach((row, idx) => {
+      const y = top + 30 + idx * 16;
+      ctx.fillStyle = row[0];
+      ctx.beginPath();
+      ctx.arc(left + 12, y - 3, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#d5ecf6";
+      ctx.fillText(row[1], left + 24, y);
+    });
+
+    ctx.strokeStyle = "rgba(78, 205, 196, 0.65)";
+    ctx.beginPath();
+    ctx.moveTo(left + 10, top + 106);
+    ctx.lineTo(left + 28, top + 106);
+    ctx.stroke();
+    ctx.fillStyle = "#d5ecf6";
+    ctx.fillText("通信链路", left + 34, top + 109);
+    ctx.restore();
+  }
+
   drawViewport(frame, viewport, label) {
     const { ctx } = this;
     const agentsById = new Map(frame.agents.map((agent) => [agent.id, agent]));
@@ -151,6 +193,7 @@ export class SwarmCanvas {
     this.drawTargets(frame.targets, viewport);
     this.drawAgents(frame.agents, viewport);
     this.drawHud(frame, viewport, label);
+    this.drawLegend(viewport);
     ctx.restore();
   }
 

@@ -135,3 +135,84 @@
 4. 增加演讲支持文件：5-8 分钟讲稿、录屏分镜、每页核心结论卡片。
 5. 前端增强：并排双视图同屏对照（同时播放两策略）。
 6. 接入 GitHub 仓库：初始化 git、提交首版，并在认证恢复后推送到远端仓库。
+
+## 本轮追加改动（2026-04-09，第三次迭代）
+
+### 1) 在线训练台后端（FastAPI）
+
+1. 新增 `backend/app.py`，实现本地异步任务队列：`queued/running/succeeded/failed/cancelled`。
+2. 新增 API：
+	- `POST /api/dataset/prepare`
+	- `POST /api/jobs/train`
+	- `POST /api/jobs/evaluate`
+	- `GET /api/jobs/{jobId}`
+	- `GET /api/runs`
+	- `GET /api/runs/{runId}/artifacts`
+3. 新增 `POST /api/simulate/compare`，支持将指定 run 的 `class-confidence` 一键注入仿真并导出到 `web-demo/public/generated`。
+4. 新增静态挂载：
+	- `/artifacts/*`（训练产物）
+	- `/generated/*`（仿真生成场景）
+
+### 2) 真实数据接入（VisDrone）
+
+1. 新增 `ml-module/data/prepare_visdrone.py`：
+	- 支持下载/断点续传/解压（可选）
+	- 支持本地 `images + annotations` 直连
+	- 目标重映射到 `vehicle / civilian-object / decoy`
+	- 输出 `train/val` 分类数据集与 `manifest.json`
+2. 新增 `ml-module/render_sample_grid.py`，输出数据样本网格图供前端展示。
+3. 更新 `ml-module/DATASET.md` 为 V2，明确真实数据主线 + 合成保底路线。
+
+### 3) 训练产物增强
+
+1. 重构 `ml-module/train.py`：
+	- 输出 `tiny-cnn.history.json`
+	- 输出 `tiny-cnn.summary.json`
+	- 输出 `tiny-cnn.curve.png`
+	- 记录每轮时长、总训练时长、设备与样本规模
+2. 保持 `infer.py/evaluate.py` 与现有流程兼容。
+
+### 4) 前端升级（同页战术沙盘 + 在线训练台）
+
+1. `web-demo/index.html` 改为上下双层布局：
+	- 上层：战术沙盘 + 控制 + 指标
+	- 下层：图例解释面板 + ML 在线实验台
+2. 新增 `web-demo/src/components/explain-panel.js`：固定图例、指标定义、场景观察点。
+3. 新增 `web-demo/src/components/ml-lab.js`：
+	- 提交数据准备/训练/评估任务
+	- 轮询任务状态和日志
+	- 展示训练曲线、混淆矩阵、样本网格、产物链接
+	- 一键应用 run 置信度到仿真
+4. `web-demo/src/main.js` 接入后端交互与动态场景加载。
+5. `web-demo/src/components/swarm-canvas.js` 增加画布内固定图例。
+6. `web-demo/src/components/metrics-board.js` 增加链路度与读图提示。
+
+### 5) Git 产物策略与路径收敛
+
+1. 仿真导出默认路径改为 `web-demo/public/generated`：
+	- `sim-core/simulate.py`
+	- `sim-core/generate_scenario_pack.py`
+2. `.gitignore` 调整：
+	- 忽略 `web-demo/public/generated/*.json`
+	- `web-demo/public/scenarios/` 仅保留 `demo-compare.json`
+	- 忽略 `ml-module/runs/` 和 VisDrone 数据目录
+3. 已将以下运行产物从 Git 索引中移除（保留本地文件）：
+	- `jam-recovery-compare.json`
+	- `recon-coverage-compare.json`
+	- `multi-target-allocation-compare.json`
+
+### 6) 调试与验证流程
+
+1. 新增 `backend/requirements.txt`。
+2. `.vscode/launch.json` 新增 `Backend: FastAPI` 并加入 `Demo: Serve and Open` 复合启动。
+3. `.vscode/tasks.json` 新增 `backend: serve api`。
+4. 新增 `scripts/verify.sh` 作为固定门禁：
+	- compileall
+	- 生成场景包（generated）
+	- 实验矩阵 + 图表
+	- 关键产物存在性检查
+
+### 7) 当前阻塞与下一步
+
+1. 当前环境无法访问外网下载数据集时，`prepare_visdrone.py --download` 会受限，可通过本地提供 `images/annotations` 目录绕过。
+2. 下一步优先在真实 VisDrone 子集上跑一轮完整前端链路，确认前端在线训练体验和时延表现。

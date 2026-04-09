@@ -17,7 +17,7 @@ SCENARIOS = [
 
 def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate compare files for all built-in scenarios")
-    parser.add_argument("--output-dir", type=str, default="../web-demo/public/scenarios")
+    parser.add_argument("--output-dir", type=str, default="../web-demo/public/generated")
     parser.add_argument("--steps", type=int, default=220)
     parser.add_argument("--agents", type=int, default=28)
     parser.add_argument("--packet-loss", type=float, default=0.22)

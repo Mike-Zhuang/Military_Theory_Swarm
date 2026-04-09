@@ -1,24 +1,41 @@
 import { createControlPanel } from "./components/control-panel.js";
+import { createExplainPanel } from "./components/explain-panel.js";
+import { createMlLab } from "./components/ml-lab.js";
 import { MetricsBoard } from "./components/metrics-board.js";
 import { SwarmCanvas } from "./components/swarm-canvas.js";
 import { loadScenario } from "./lib/scenario-loader.js";
 
+const BACKEND_BASE_URL = "http://127.0.0.1:8001";
+
 const SCENARIO_OPTIONS = [
   {
+    key: "jam-recovery",
     label: "干扰重构 (jam-recovery)",
-    path: "./public/scenarios/jam-recovery-compare.json",
+    paths: [
+      "./public/generated/jam-recovery-compare.json",
+      "./public/scenarios/demo-compare.json",
+    ],
   },
   {
+    key: "recon-coverage",
     label: "侦察覆盖 (recon-coverage)",
-    path: "./public/scenarios/recon-coverage-compare.json",
+    paths: [
+      "./public/generated/recon-coverage-compare.json",
+      "./public/scenarios/demo-compare.json",
+    ],
   },
   {
+    key: "multi-target-allocation",
     label: "多目标分配 (multi-target)",
-    path: "./public/scenarios/multi-target-allocation-compare.json",
+    paths: [
+      "./public/generated/multi-target-allocation-compare.json",
+      "./public/scenarios/demo-compare.json",
+    ],
   },
   {
+    key: "demo",
     label: "默认场景 (demo)",
-    path: "./public/scenarios/demo-compare.json",
+    paths: ["./public/scenarios/demo-compare.json"],
   },
 ];
 
@@ -33,12 +50,11 @@ const state = {
   lastTime: 0,
 };
 
-let scenario = await loadScenario(SCENARIO_OPTIONS[state.scenarioIndex].path);
-const canvas = new SwarmCanvas(
-  document.getElementById("swarm-canvas"),
-  scenario.metadata.world,
-);
+let scenario = await loadScenario(SCENARIO_OPTIONS[state.scenarioIndex].paths);
+const canvas = new SwarmCanvas(document.getElementById("swarm-canvas"), scenario.metadata.world);
 const metricsBoard = new MetricsBoard(document.getElementById("metrics-board"));
+
+createExplainPanel(document.getElementById("explain-panel"));
 
 const controls = createControlPanel({
   container: document.getElementById("control-panel"),
@@ -79,9 +95,44 @@ const controls = createControlPanel({
   },
 });
 
+createMlLab({
+  container: document.getElementById("ml-lab-panel"),
+  onApplyConfidence: async ({ runId, backendBaseUrl }) => {
+    const scenarioKey = SCENARIO_OPTIONS[state.scenarioIndex].key;
+    const mappedScenario = scenarioKey === "demo" ? "jam-recovery" : scenarioKey;
+    const payload = await fetch(`${backendBaseUrl || BACKEND_BASE_URL}/api/simulate/compare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scenario: mappedScenario,
+        runId,
+        steps: 260,
+        agents: 32,
+        packetLoss: 0.25,
+      }),
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      return response.json();
+    });
+
+    const scenarioUrl = `${backendBaseUrl || BACKEND_BASE_URL}${payload.scenarioUrl}`;
+    scenario = await loadScenario([scenarioUrl]);
+    state.primaryRunIndex = 0;
+    state.secondaryRunIndex = Math.min(1, scenario.runs.length - 1);
+    state.frameIndex = 0;
+    state.isPlaying = true;
+
+    controls.setRunOptions(scenario.runs, 0, Math.min(1, scenario.runs.length - 1));
+    controls.setPlayState(true);
+    render();
+  },
+});
+
 async function switchScenario(scenarioIndex) {
   const selected = SCENARIO_OPTIONS[scenarioIndex];
-  const loaded = await loadScenario(selected.path);
+  const loaded = await loadScenario(selected.paths);
   scenario = loaded;
   state.scenarioIndex = scenarioIndex;
   state.primaryRunIndex = 0;

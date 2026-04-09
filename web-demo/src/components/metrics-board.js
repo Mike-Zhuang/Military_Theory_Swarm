@@ -30,10 +30,19 @@ export class MetricsBoard {
         <div class="metric-value">${(summary.survivalRate * 100).toFixed(1)}%</div>
       </div>
       <div class="metric-card">
+        <div class="metric-label">平均链路度</div>
+        <div class="metric-value">${summary.avgLinkDegree.toFixed(2)}</div>
+      </div>
+      <div class="metric-card">
         <div class="metric-label">实时状态</div>
         <div class="metric-label">Frame: ${frame.t}/${maxFrame}</div>
         <div class="metric-label">Alive Agents: ${aliveCount}</div>
         <div class="metric-label">Active Targets: ${activeTargets}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">解读提示</div>
+        <div class="metric-label">覆盖率高 + 响应短：协同策略更稳。</div>
+        <div class="metric-label">链路度低 + 生存率降：通信/失效压力更大。</div>
       </div>
     `;
   }

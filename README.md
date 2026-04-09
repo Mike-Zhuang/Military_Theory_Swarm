@@ -1,140 +1,145 @@
-# 蜂群自主协同作战（教育仿真）
+# 蜂群自主协同作战（教育仿真 V2）
 
-本项目用于军事理论课程展示，目标是用可运行代码演示：
-- 单体无人平台的运动学与控制逻辑
-- 去中心化多智能体协同在干扰环境下的鲁棒性
-- 轻量机器学习模型如何影响任务优先级与协同效率
+本项目用于军事理论课程展示，目标是把“蜂群协同仿真 + 真实数据驱动 ML + 前端在线实验台”打通到同一套可演示流程。
 
 > 重要边界：本仓库仅用于课堂教学与算法研究，不包含现实武器化接口、部署参数或实战实现细节。
 
-## 当前交付内容
+## 当前能力
 
-- `sim-core`：Python 多智能体仿真核心（含干扰注入、对照实验导出）
-- `ml-module`：合成数据生成、轻量分类模型训练与推理
-- `ml-module/evaluate.py`：验证集评估与混淆矩阵导出
-- `web-demo`：战术沙盘风格前端，可播放对照场景
-- `docs`：系统设计与实验指标模板
-- `AGENT.md`：开发代理持续记录（每轮改动、下一步计划）
+- `sim-core`：去中心化/集中式对照仿真，支持外部 ML 置信度注入。
+- `ml-module`：VisDrone 子集准备、训练、推理、评估、样本网格导出。
+- `backend`：FastAPI 本地异步任务队列，前端可提交训练/评估任务并查询状态。
+- `web-demo`：战术沙盘 + 图例解释 + 在线训练台（同页交互）。
+- `scripts/verify.sh`：固定验证门禁脚本。
 
 ## 目录结构
 
 ```text
 Swarm/
-├── AGENT.md
-├── README.md
-├── docs/
-│   ├── experiment-metrics.md
-│   └── system-design.md
+├── backend/
+│   ├── app.py
+│   └── requirements.txt
 ├── ml-module/
 │   ├── data/
-│   │   └── synthetic-generator.py
+│   │   ├── synthetic-generator.py
+│   │   └── prepare_visdrone.py
+│   ├── evaluate.py
 │   ├── infer.py
 │   ├── model.py
+│   ├── render_sample_grid.py
 │   ├── requirements.txt
 │   └── train.py
 ├── sim-core/
-│   ├── requirements.txt
-│   ├── run_experiments.py
-│   ├── simulate.py
+├── web-demo/
+│   ├── public/
+│   │   ├── generated/
+│   │   └── scenarios/demo-compare.json
 │   └── src/
-│       ├── coordination.py
-│       ├── disturbance.py
-│       ├── dynamics.py
-│       ├── exporter.py
-│       ├── models.py
-│       └── simulator.py
-└── web-demo/
-    ├── index.html
-    ├── public/
-    │   └── scenarios/
-    │       └── demo-compare.json
-    └── src/
-        ├── components/
-        │   ├── control-panel.js
-        │   ├── metrics-board.js
-        │   └── swarm-canvas.js
-        ├── lib/
-        │   └── scenario-loader.js
-        ├── main.js
-        └── styles.css
+├── scripts/
+│   └── verify.sh
+└── AGENT.md
 ```
 
-## 快速开始
-
-### 0) 初始化环境（推荐在项目根目录）
+## 环境准备
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r ml-module/requirements.txt
 pip install -r docs/requirements.txt
+pip install -r backend/requirements.txt
 ```
 
-### 1) 运行仿真并导出对照数据
+## 启动方式
+
+### 1) 启动后端（在线训练台依赖）
+
+```bash
+python -m uvicorn backend.app:app --host 127.0.0.1 --port 8001 --reload
+```
+
+### 2) 启动前端
+
+```bash
+python -m http.server 5173 --directory web-demo
+# 浏览器打开 http://127.0.0.1:5173
+```
+
+前端页面中 `ML 在线实验台` 默认后端地址就是 `http://127.0.0.1:8001`。
+
+## VisDrone 真实数据流程
+
+### A. 准备数据
+
+可在前端点击“准备/校验 VisDrone 子集”，也可命令行执行：
+
+```bash
+cd ml-module
+python data/prepare_visdrone.py \
+  --raw-dir data/visdrone/raw \
+  --output-dir data/visdrone-ready \
+  --subset-size-per-class 900 \
+  --val-ratio 0.2
+```
+
+如果要自动下载官方压缩包：
+
+```bash
+python data/prepare_visdrone.py --download
+```
+
+### B. 训练 + 评估
+
+```bash
+python train.py --data-dir data/visdrone-ready --epochs 18 --batch-size 64 --learning-rate 0.0006 --output runs/manual/checkpoints/tiny-cnn.pt
+python infer.py --checkpoint runs/manual/checkpoints/tiny-cnn.pt --calibration-dir data/visdrone-ready/val --emit-class-confidence runs/manual/class-confidence.json
+python evaluate.py --checkpoint runs/manual/checkpoints/tiny-cnn.pt --data-dir data/visdrone-ready --split val --output-dir runs/manual/eval
+python render_sample_grid.py --data-dir data/visdrone-ready --split val --output runs/manual/sample-grid.png
+```
+
+## 仿真导出路径策略
+
+- 保留样例：`web-demo/public/scenarios/demo-compare.json`（入库）
+- 运行产物：`web-demo/public/generated/*.json`（忽略）
+
+默认命令：
 
 ```bash
 cd sim-core
-python simulate.py --compare --scenario jam-recovery --steps 260 --agents 32 --packet-loss 0.25 --output ../web-demo/public/scenarios/demo-compare.json
-python generate_scenario_pack.py --steps 220 --agents 28 --packet-loss 0.22
+python simulate.py --compare --scenario jam-recovery --output ../web-demo/public/generated/demo-compare.json
+python generate_scenario_pack.py --output-dir ../web-demo/public/generated
 ```
 
-### 2) 生成并训练轻量 ML 模型
+## 验证门禁与推送
+
+固定验证脚本：
 
 ```bash
-cd ../ml-module
-python data/synthetic-generator.py --output data/generated --samples-per-class 1200
-python train.py --data-dir data/generated --epochs 10 --batch-size 64 --output checkpoints/tiny-cnn.pt
-python infer.py --checkpoint checkpoints/tiny-cnn.pt --calibration-dir data/generated/val --emit-class-confidence ../sim-core/class-confidence.json
-python evaluate.py --checkpoint checkpoints/tiny-cnn.pt --data-dir data/generated --split val --output-dir reports/eval
+./scripts/verify.sh
 ```
 
-关于“为什么没有外部数据集也能训练”，核心原因是这里用的是**我们自己生成的合成数据集**：脚本会自动画出俯视目标图像，并按类别写入 `train/val` 目录，所以训练依然是基于数据集完成的，只是数据集不是从网上下载，而是项目自己构造。详细说明见 `ml-module/DATASET.md`。
-
-### 3) 导出实验矩阵与图表
+验证通过后执行：
 
 ```bash
-cd ../sim-core
-python run_experiments.py --scenario jam-recovery --steps 180 --agents 24 --output-dir ../docs/outputs
-cd ../docs
-python plot_metrics.py --csv outputs/experiment-matrix.csv --output-dir outputs/figures
+git add .
+git commit -m "feat: ..."
+git push origin main
 ```
 
-### 4) 启动网页演示
+## VS Code 调试入口
 
-```bash
-cd ../
-python -m http.server 5173 --directory web-demo
-# 浏览器打开 http://localhost:5173
-```
+已提供以下运行配置：
 
-## VS Code 直接调试
+1. `Backend: FastAPI`
+2. `Demo: Serve and Open`
+3. `Sim: Compare Export`
+4. `Sim: Generate Scenario Pack`
+5. `ML: Evaluate Validation Set`
+6. `Docs: Plot Metrics`
 
-已内置调试配置文件：
+## 课堂讲解建议
 
-- `.vscode/launch.json`
-- `.vscode/tasks.json`
-
-在 VS Code 的 Run and Debug 里可以直接运行：
-
-1. `Sim: Compare Export`
-2. `Sim: Generate Scenario Pack`
-3. `Sim: Experiment Matrix`
-4. `ML: Generate Synthetic Dataset`
-5. `ML: Train Tiny CNN`
-6. `ML: Infer and Export Class Confidence`
-7. `ML: Evaluate Validation Set`
-8. `Docs: Plot Metrics`
-9. `Demo: Serve and Open`
-
-## 建议演示流程（录屏友好）
-
-1. 打开双视图对照模式，同时播放 `去中心化 + ML` 与 `集中式 + 无 ML`。
-2. 动态调整通信干扰强度，观察任务完成率与平均响应时间变化。
-3. 切换场景（侦察覆盖 / 干扰重构 / 多目标分配）并强调鲁棒性差异。
-4. 展示 `reports/eval/confusion-matrix.png` 与误检影响曲线，解释模型误差如何传导到协同决策。
-
-## 后续扩展
-
-- 引入图神经网络（GNN）做邻域信息融合
-- 引入一致性滤波与鲁棒控制约束
-- 增加“误报补偿策略”与“失联重构策略”的可视化对照
+1. 先讲图例和指标定义，降低“看不懂动图”的门槛。
+2. 再做去中心化 vs 集中式对照。
+3. 接着在前端提交训练任务，展示训练曲线与混淆矩阵。
+4. 最后一键应用某个 run 的置信度到仿真回放，讲清“识别误差如何传导到协同决策”。

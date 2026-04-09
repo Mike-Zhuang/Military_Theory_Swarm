@@ -17,7 +17,7 @@
         "--packet-loss",
         "0.25",
         "--output",
-        "../web-demo/public/scenarios/demo-compare.json"
+        "../web-demo/public/generated/demo-compare.json"
       ],
       "options": {
         "cwd": "${workspaceFolder}/sim-core"
@@ -105,7 +105,7 @@
         "--checkpoint",
         "checkpoints/tiny-cnn.pt",
         "--calibration-dir",
-        "data/generated/val",
+        "data/visdrone-ready/val",
         "--emit-class-confidence",
         "../sim-core/class-confidence.json"
       ],
@@ -123,7 +123,7 @@
         "--checkpoint",
         "checkpoints/tiny-cnn.pt",
         "--data-dir",
-        "data/generated",
+        "data/visdrone-ready",
         "--split",
         "val",
         "--output-dir",
@@ -149,6 +149,26 @@
         "cwd": "${workspaceFolder}/docs"
       },
       "group": "build"
+    },
+    {
+      "label": "backend: serve api",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "-m",
+        "uvicorn",
+        "backend.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8001",
+        "--reload"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
     },
     {
       "label": "web: serve demo",

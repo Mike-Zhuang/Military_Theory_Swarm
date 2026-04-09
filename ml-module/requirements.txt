@@ -2,3 +2,4 @@ torch>=2.3.0
 torchvision>=0.18.0
 pillow>=10.0.0
 matplotlib>=3.8.0
+requests>=2.32.0

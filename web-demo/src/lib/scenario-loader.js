@@ -1,11 +1,22 @@
-export async function loadScenario(path) {
+async function tryLoad(path) {
   const response = await fetch(path);
   if (!response.ok) {
-    throw new Error(`Failed to load scenario: ${response.status} ${response.statusText}`);
+    return null;
   }
   const payload = await response.json();
   if (!payload.runs || payload.runs.length === 0) {
-    throw new Error("Scenario file has no runs.");
+    return null;
   }
   return payload;
+}
+
+export async function loadScenario(paths) {
+  const candidates = Array.isArray(paths) ? paths : [paths];
+  for (const path of candidates) {
+    const payload = await tryLoad(path);
+    if (payload) {
+      return payload;
+    }
+  }
+  throw new Error(`Failed to load scenario from candidates: ${candidates.join(", ")}`);
 }

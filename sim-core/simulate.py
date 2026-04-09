@@ -27,7 +27,7 @@ def parseArgs() -> argparse.Namespace:
         default="jam-recovery",
     )
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--output", type=str, default="../web-demo/public/scenarios/demo-compare.json")
+    parser.add_argument("--output", type=str, default="../web-demo/public/generated/demo-compare.json")
     parser.add_argument("--ml-confidence", type=str, default="")
     parser.add_argument("--ml-off", action="store_true")
     return parser.parse_args()
