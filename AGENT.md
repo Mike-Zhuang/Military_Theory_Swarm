@@ -338,3 +338,27 @@
 1. `node --check web-demo/src/main.js`
 2. `python3 -m compileall web-demo/src`
 3. `./scripts/verify.sh`（6/6 全部通过）
+
+## 本轮追加改动（2026-04-09，第七次迭代，前端语法崩溃修复）
+
+### 1) 问题与根因
+
+1. 用户 F12 报错：`Uncaught SyntaxError: Unexpected identifier 'Backend'`。
+2. 根因：`explain-panel.js` 的模板字符串中写了反引号文本（如 `` `Backend: FastAPI` ``），导致模板字符串被提前截断，整段模块语法报错，页面无法渲染。
+
+### 2) 修复动作
+
+1. `web-demo/src/components/explain-panel.js`
+	- 将反引号文本改为 `<code>...</code>`，彻底消除语法歧义。
+2. `web-demo/src/styles.css`
+	- 新增 `.explain-row code` 样式，保证提示内容可读。
+3. `web-demo/index.html`
+	- 增加 `<link rel="icon" href="data:,">`，消除 `favicon.ico` 404 噪声。
+
+### 3) 本轮验证
+
+已执行并通过：
+
+1. `node --check`（`main/control-panel/explain-panel/ml-lab/metrics/icon-set`）
+2. `python3 -m compileall web-demo/src`
+3. `./scripts/verify.sh`（6/6 全部通过）

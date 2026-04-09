@@ -42,8 +42,8 @@ export function createExplainPanel(container) {
 
     <div class="metric-card">
       <div class="metric-label card-title">${iconSvg("warning")} 常见问题自诊断</div>
-      <div class="explain-row">后端连接失败：确认 `Backend: FastAPI` 已启动，地址为 `127.0.0.1:8001`。</div>
-      <div class="explain-row">无训练产物：先执行“准备数据”并等待任务状态变成 `succeeded`。</div>
+      <div class="explain-row">后端连接失败：确认 <code>Backend: FastAPI</code> 已启动，地址为 <code>127.0.0.1:8001</code>。</div>
+      <div class="explain-row">无训练产物：先执行“准备数据”并等待任务状态变成 <code>succeeded</code>。</div>
       <div class="explain-row">仿真未变化：确认已点击“将置信度应用到仿真”，并观察右上角事件提示。</div>
     </div>
   `;

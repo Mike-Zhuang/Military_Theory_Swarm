@@ -298,6 +298,14 @@ input[type="checkbox"] {
   line-height: 1.45;
 }
 
+.explain-row code {
+  background: #e9f1f8;
+  border: 1px solid #c9d9e6;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 12px;
+}
+
 .workflow-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
