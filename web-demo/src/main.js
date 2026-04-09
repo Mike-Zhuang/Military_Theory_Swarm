@@ -1,9 +1,9 @@
-import { createControlPanel } from "./components/control-panel.js?v=20260409-03";
-import { createExplainPanel } from "./components/explain-panel-v2.js?v=20260409-03";
-import { createMlLab } from "./components/ml-lab.js?v=20260409-03";
-import { MetricsBoard } from "./components/metrics-board.js?v=20260409-03";
-import { SwarmCanvas } from "./components/swarm-canvas.js?v=20260409-03";
-import { loadScenario } from "./lib/scenario-loader.js?v=20260409-03";
+import { createControlPanel } from "./components/control-panel.js?v=20260409-04";
+import { createExplainPanel } from "./components/explain-panel-v2.js?v=20260409-04";
+import { createMlLab } from "./components/ml-lab.js?v=20260409-04";
+import { MetricsBoard } from "./components/metrics-board.js?v=20260409-04";
+import { SwarmCanvas } from "./components/swarm-canvas.js?v=20260409-04";
+import { loadScenario } from "./lib/scenario-loader.js?v=20260409-04";
 
 const BACKEND_BASE_URL = "http://127.0.0.1:8001";
 

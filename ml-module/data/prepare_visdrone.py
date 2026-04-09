@@ -43,6 +43,9 @@ class SourceStats:
     filteredInvalidCount: int = 0
     filteredUnknownCategoryCount: int = 0
     backgroundCropCount: int = 0
+    ignoredUsedCount: int = 0
+    ignoredSkippedCount: int = 0
+    backgroundNegativeCount: int = 0
     classBoxCount: Dict[str, int] | None = None
     categoryHistogram: Dict[str, int] | None = None
 
@@ -66,6 +69,9 @@ class SourceStats:
             "filteredInvalidCount": self.filteredInvalidCount,
             "filteredUnknownCategoryCount": self.filteredUnknownCategoryCount,
             "backgroundCropCount": self.backgroundCropCount,
+            "ignoredUsedCount": self.ignoredUsedCount,
+            "ignoredSkippedCount": self.ignoredSkippedCount,
+            "backgroundNegativeCount": self.backgroundNegativeCount,
             "classBoxCount": self.classBoxCount,
             "categoryHistogram": self.categoryHistogram,
         }
@@ -94,6 +100,7 @@ def parseArgs() -> argparse.Namespace:
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--min-box-size", type=int, default=16)
     parser.add_argument("--background-crops-per-image", type=int, default=2)
+    parser.add_argument("--use-ignored-as-decoy", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -211,6 +218,7 @@ def collectCandidates(
     annDir: Path,
     minBoxSize: int,
     backgroundPerImage: int,
+    useIgnoredAsDecoy: bool,
     rng: random.Random,
 ) -> Tuple[Dict[str, List[CropCandidate]], SourceStats]:
     grouped: Dict[str, List[CropCandidate]] = {
@@ -261,8 +269,12 @@ def collectCandidates(
                 )
                 stats.classBoxCount["civilian-object"] += 1
             elif box.category in DECOY_CATEGORIES:
-                grouped["decoy"].append(CropCandidate(imagePath=imagePath, bbox=bbox, className="decoy"))
-                stats.classBoxCount["decoy"] += 1
+                if useIgnoredAsDecoy:
+                    grouped["decoy"].append(CropCandidate(imagePath=imagePath, bbox=bbox, className="decoy"))
+                    stats.classBoxCount["decoy"] += 1
+                    stats.ignoredUsedCount += 1
+                else:
+                    stats.ignoredSkippedCount += 1
             else:
                 stats.filteredUnknownCategoryCount += 1
 
@@ -276,6 +288,7 @@ def collectCandidates(
         )
         grouped["decoy"].extend(backgroundCandidates)
         stats.backgroundCropCount += len(backgroundCandidates)
+        stats.backgroundNegativeCount += len(backgroundCandidates)
         stats.classBoxCount["decoy"] += len(backgroundCandidates)
 
     return grouped, stats
@@ -393,6 +406,7 @@ def main() -> None:
         annDir=trainAnnDir,
         minBoxSize=args.min_box_size,
         backgroundPerImage=args.background_crops_per_image,
+        useIgnoredAsDecoy=args.use_ignored_as_decoy,
         rng=rng,
     )
     sources["train"] = sourcePayload("train", trainImagesDir, trainAnnDir, trainStats)
@@ -415,6 +429,7 @@ def main() -> None:
             annDir=valAnnDir,
             minBoxSize=args.min_box_size,
             backgroundPerImage=args.background_crops_per_image,
+            useIgnoredAsDecoy=args.use_ignored_as_decoy,
             rng=random.Random(args.seed + 97),
         )
         sources["val"] = sourcePayload("val", valImagesDir, valAnnDir, valStats)
@@ -487,6 +502,12 @@ def main() -> None:
             "minBoxSize": args.min_box_size,
             "backgroundCropsPerImage": args.background_crops_per_image,
             "ignoredUnknownCategory": True,
+            "useIgnoredAsDecoy": bool(args.use_ignored_as_decoy),
+        },
+        "labelQuality": {
+            "ignoredUsedCount": sum(source["stats"]["ignoredUsedCount"] for source in sources.values()),
+            "ignoredSkippedCount": sum(source["stats"]["ignoredSkippedCount"] for source in sources.values()),
+            "backgroundNegativeCount": sum(source["stats"]["backgroundNegativeCount"] for source in sources.values()),
         },
     }
     (outputDir / "manifest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -44,7 +44,7 @@ echo "[verify] 6/6 ML 训练/评估 smoke test"
 (
   cd "${ROOT_DIR}/ml-module"
   "${PYTHON_BIN}" data/synthetic-generator.py --output "${TEMP_DIR}/synthetic-data" --samples-per-class 28 --seed 21
-  "${PYTHON_BIN}" train.py --data-dir "${TEMP_DIR}/synthetic-data" --epochs 1 --batch-size 16 --output "${TEMP_DIR}/tiny-cnn.pt"
+  "${PYTHON_BIN}" train.py --data-dir "${TEMP_DIR}/synthetic-data" --model-name tiny-cnn --epochs 1 --batch-size 16 --output "${TEMP_DIR}/tiny-cnn.pt"
   "${PYTHON_BIN}" evaluate.py --checkpoint "${TEMP_DIR}/tiny-cnn.pt" --data-dir "${TEMP_DIR}/synthetic-data" --split val --batch-size 16 --output-dir "${TEMP_DIR}/eval"
 )
 

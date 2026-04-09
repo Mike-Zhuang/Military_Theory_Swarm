@@ -408,3 +408,91 @@
 已执行并通过：
 
 1. `./scripts/verify.sh`（6/6 全部通过）
+
+## 本轮追加改动（2026-04-09，第十次迭代，过拟合专项重构 V3）
+
+### 1) 数据标注策略修正（根因处理）
+
+1. `ml-module/data/prepare_visdrone.py`
+	- 新增 `--use-ignored-as-decoy`（默认关闭）。
+	- 默认不再把 `ignored-region(category=0)` 直接作为 decoy 监督样本，仅用于避让背景裁剪冲突。
+	- `manifest.json` 新增标签质量统计：
+		- `ignoredUsedCount`
+		- `ignoredSkippedCount`
+		- `backgroundNegativeCount`
+2. `backend/app.py`
+	- `POST /api/dataset/prepare` 新增 `useIgnoredAsDecoy` 参数透传。
+
+### 2) 训练主干重构（抗过拟合）
+
+1. `ml-module/model.py`
+	- 新增模型工厂：`tiny-cnn` + `mobilenetv3-small`。
+	- 支持预训练初始化失败时自动降级随机初始化。
+	- 新增 `setBackboneFrozen`，用于两阶段训练冻结/解冻。
+2. `ml-module/train.py`（重写）
+	- 新训练策略：`AdamW + weightDecay + labelSmoothing + scheduler + EarlyStopping`。
+	- 两阶段训练：前 `freezeEpochs` 仅训练头部，后续解冻全量。
+	- 增强分级：`light / medium / strong`。
+	- 产物升级：
+		- `checkpoints/best.pt`
+		- `checkpoints/last.pt`
+		- `checkpoints/history.json`
+		- `checkpoints/summary.json`
+		- `checkpoints/curve.png`
+		- `checkpoints/curve-live.png`
+		- `checkpoints/live-metrics.jsonl`
+		- `checkpoints/progress.json`
+	- 保持旧产物兼容（继续输出 `tiny-cnn.*`）。
+
+### 3) 推理评估增强（可讲可证）
+
+1. `ml-module/infer.py`
+	- 自动读取 checkpoint 里的 `modelName/imageSize/normalization`，避免模型切换后推理错配。
+2. `ml-module/evaluate.py`
+	- 新增 `macroF1`、`ECE`、per-class `precision/recall/f1`。
+	- 输出 `bestEpoch/bestValLoss/bestValAcc/lastValLoss/lastValAcc/generalizationGapAtBest`。
+3. `ml-module/DATASET.md`
+	- 同步新 decoy 策略与 V3 训练命令。
+
+### 4) 后端任务与前端训练台升级
+
+1. `backend/app.py`
+	- 扩展 `POST /api/jobs/train` 参数：
+		- `modelName/pretrained/freezeEpochs`
+		- `weightDecay/labelSmoothing`
+		- `scheduler/earlyStopPatience/earlyStopMinDelta`
+		- `augmentLevel/imageSize`
+	- 新增 `POST /api/jobs/{jobId}/cancel`。
+	- `GET /api/jobs/{jobId}` 增加：
+		- `progress`
+		- `liveMetrics`
+		- `bestSnapshot`
+	- 训练后默认用 `best.pt` 做 infer/evaluate，降低后期过拟合影响。
+2. `web-demo/src/components/ml-lab.js`
+	- 新增高级调参区与实时进度展示。
+	- 新增“停止当前任务”按钮。
+	- 新增 val loss 连续上升告警。
+	- 产物区新增 live 曲线、best/last checkpoint 链接。
+3. `web-demo/src/styles.css`
+	- 强化状态/日志区域强制换行，继续防止长 token 拉伸页面。
+4. `web-demo/index.html` + `web-demo/src/main.js`
+	- 版本号升级到 `v=20260409-04`，规避旧缓存命中。
+
+### 5) 调试与门禁同步
+
+1. `.vscode/launch.json`、`.vscode/tasks.json`
+	- 默认训练入口升级为 V3 参数模板。
+	- 推理与评估默认使用 `runs/dev/checkpoints/best.pt`。
+2. `scripts/verify.sh`
+	- ML smoke test 显式用 `tiny-cnn`，避免本地环境无预训练缓存导致失败。
+
+### 6) 本轮验证记录
+
+已执行并通过：
+
+1. `python -m compileall backend ml-module`
+2. `node --check web-demo/src/components/ml-lab.js web-demo/src/main.js web-demo/src/components/explain-panel-v2.js`
+3. `bash scripts/verify.sh`（6/6 全部通过）
+4. 额外链路验证（防止主线回归）：
+	- `mobilenetv3-small` 在合成数据上训练 2 epoch 成功。
+	- `evaluate.py --checkpoint /tmp/swarm-v3-synthetic/best.pt` 成功产出评估结果。

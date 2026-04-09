@@ -13,7 +13,7 @@
 
 - `vehicle`：`car/van/bus/truck/motor`
 - `civilian-object`：`pedestrian/people/bicycle/tricycle/awning-tricycle`
-- `decoy`：`ignored-region` + 随机背景硬负样本
+- `decoy`：默认仅随机背景硬负样本（`ignored-region` 默认不直接作为监督标签）
 
 ### 处理流程（推荐：官方 train+val）
 
@@ -29,6 +29,16 @@ python data/prepare_visdrone.py \
   --output-dir data/visdrone-ready \
   --subset-size-per-class 900 \
   --val-subset-size-per-class 0
+```
+
+如需做对照实验，才开启 `ignored-region` 作为 decoy：
+
+```bash
+python data/prepare_visdrone.py \
+  --split-mode official-val \
+  --raw-dir data/visdrone/raw \
+  --output-dir data/visdrone-ready \
+  --use-ignored-as-decoy
 ```
 
 可选：自动下载并解压官方训练集压缩包（仅 train）
@@ -68,6 +78,7 @@ data/visdrone-ready/
 - `splitMode` 与数据源路径
 - train/val 原始候选数量与最终输出数量
 - 小框过滤、越界过滤、未知类别过滤统计
+- 标签质量统计（`ignoredUsedCount / ignoredSkippedCount / backgroundNegativeCount`）
 - 类别映射规则（便于答辩时说明）
 
 ## 2) 合成数据保底路线
@@ -82,11 +93,32 @@ python train.py --data-dir data/generated --epochs 10 --batch-size 64 --output c
 ## 3) 训练和评估（通用）
 
 ```bash
-python train.py --data-dir data/visdrone-ready --epochs 18 --batch-size 64 --learning-rate 0.0006 --output runs/manual/checkpoints/tiny-cnn.pt
-python infer.py --checkpoint runs/manual/checkpoints/tiny-cnn.pt --calibration-dir data/visdrone-ready/val --emit-class-confidence runs/manual/class-confidence.json
-python evaluate.py --checkpoint runs/manual/checkpoints/tiny-cnn.pt --data-dir data/visdrone-ready --split val --output-dir runs/manual/eval
+python train.py \
+  --data-dir data/visdrone-ready \
+  --model-name mobilenetv3-small \
+  --epochs 80 \
+  --batch-size 64 \
+  --learning-rate 0.0003 \
+  --weight-decay 0.0001 \
+  --label-smoothing 0.05 \
+  --freeze-epochs 3 \
+  --scheduler cosine \
+  --early-stop-patience 8 \
+  --early-stop-min-delta 0.001 \
+  --augment-level medium \
+  --image-size 128 \
+  --output runs/manual/checkpoints/tiny-cnn.pt
+
+python infer.py --checkpoint runs/manual/checkpoints/best.pt --calibration-dir data/visdrone-ready/val --emit-class-confidence runs/manual/class-confidence.json
+python evaluate.py --checkpoint runs/manual/checkpoints/best.pt --data-dir data/visdrone-ready --split val --output-dir runs/manual/eval
 python render_sample_grid.py --data-dir data/visdrone-ready --split val --output runs/manual/sample-grid.png
 ```
+
+训练阶段会持续生成：
+
+- `checkpoints/live-metrics.jsonl`（实时指标）
+- `checkpoints/curve-live.png`（实时曲线）
+- `checkpoints/best.pt` 与 `checkpoints/last.pt`
 
 ## 4) 关于“训练看起来很快”
 

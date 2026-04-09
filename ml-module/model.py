@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torchvision import models
+
+MODEL_NAMES = ["tiny-cnn", "mobilenetv3-small"]
 
 
 class TinyConvNet(nn.Module):
@@ -20,6 +23,7 @@ class TinyConvNet(nn.Module):
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
+            nn.AdaptiveAvgPool2d((8, 8)),
         )
         self.classifier = nn.Sequential(
             nn.Flatten(),
@@ -32,3 +36,49 @@ class TinyConvNet(nn.Module):
     def forward(self, tensor: torch.Tensor) -> torch.Tensor:
         features = self.features(tensor)
         return self.classifier(features)
+
+
+def buildModel(
+    modelName: str,
+    classCount: int,
+    pretrained: bool,
+    dropout: float = 0.35,
+) -> nn.Module:
+    if modelName == "tiny-cnn":
+        return TinyConvNet(classCount=classCount)
+
+    if modelName == "mobilenetv3-small":
+        weights = None
+        if pretrained:
+            try:
+                weights = models.MobileNet_V3_Small_Weights.IMAGENET1K_V1
+            except Exception as error:  # noqa: BLE001
+                print(f"[warning] failed to load pretrained weights metadata: {error}")
+                weights = None
+
+        try:
+            model = models.mobilenet_v3_small(weights=weights)
+        except Exception as error:  # noqa: BLE001
+            print(f"[warning] failed to initialize pretrained backbone, fallback to random init: {error}")
+            model = models.mobilenet_v3_small(weights=None)
+
+        inFeatures = model.classifier[0].in_features
+        model.classifier = nn.Sequential(
+            nn.Linear(inFeatures, 512),
+            nn.Hardswish(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(512, classCount),
+        )
+        return model
+
+    raise ValueError(f"Unsupported model name: {modelName}")
+
+
+def setBackboneFrozen(model: nn.Module, modelName: str, frozen: bool) -> None:
+    if modelName != "mobilenetv3-small":
+        return
+    featureLayers = getattr(model, "features", None)
+    if featureLayers is None:
+        return
+    for parameter in featureLayers.parameters():
+        parameter.requires_grad = not frozen

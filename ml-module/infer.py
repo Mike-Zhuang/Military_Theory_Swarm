@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
-from model import TinyConvNet
+from model import buildModel
 
 
 def parseArgs() -> argparse.Namespace:
@@ -30,23 +30,28 @@ def chooseDevice() -> torch.device:
     return torch.device("cpu")
 
 
-def loadModel(checkpointPath: str, device: torch.device) -> Tuple[TinyConvNet, Dict[int, str]]:
+def loadModel(checkpointPath: str, device: torch.device) -> Tuple[torch.nn.Module, Dict[int, str], Dict[str, object]]:
     checkpoint = torch.load(checkpointPath, map_location=device)
     classToIdx = checkpoint["classToIdx"]
     idxToClass = {idx: className for className, idx in classToIdx.items()}
+    modelName = checkpoint.get("modelName", "tiny-cnn")
 
-    model = TinyConvNet(classCount=len(classToIdx)).to(device)
+    model = buildModel(
+        modelName=modelName,
+        classCount=len(classToIdx),
+        pretrained=False,
+    ).to(device)
     model.load_state_dict(checkpoint["stateDict"])
     model.eval()
-    return model, idxToClass
+    return model, idxToClass, checkpoint
 
 
-def imageTensor(imagePath: Path) -> torch.Tensor:
+def imageTensor(imagePath: Path, imageSize: int, mean: List[float], std: List[float]) -> torch.Tensor:
     transform = transforms.Compose(
         [
-            transforms.Resize((64, 64)),
+            transforms.Resize((imageSize, imageSize)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            transforms.Normalize(mean=mean, std=std),
         ]
     )
     image = Image.open(imagePath).convert("RGB")
@@ -54,7 +59,7 @@ def imageTensor(imagePath: Path) -> torch.Tensor:
 
 
 def predictOne(
-    model: TinyConvNet,
+    model: torch.nn.Module,
     tensor: torch.Tensor,
     idxToClass: Dict[int, str],
     device: torch.device,
@@ -84,11 +89,14 @@ def collectImages(args: argparse.Namespace) -> List[Path]:
 
 
 def exportClassConfidence(
-    model: TinyConvNet,
+    model: torch.nn.Module,
     idxToClass: Dict[int, str],
     device: torch.device,
     calibrationDir: Path,
     outputPath: Path,
+    imageSize: int,
+    mean: List[float],
+    std: List[float],
 ) -> Dict[str, object]:
     sums: Dict[str, float] = {}
     counts: Dict[str, int] = {}
@@ -100,7 +108,7 @@ def exportClassConfidence(
         for imagePath in classDir.glob("*.png"):
             result = predictOne(
                 model=model,
-                tensor=imageTensor(imagePath),
+                tensor=imageTensor(imagePath, imageSize=imageSize, mean=mean, std=std),
                 idxToClass=idxToClass,
                 device=device,
             )
@@ -124,13 +132,17 @@ def exportClassConfidence(
 def main() -> None:
     args = parseArgs()
     device = chooseDevice()
-    model, idxToClass = loadModel(args.checkpoint, device)
+    model, idxToClass, checkpoint = loadModel(args.checkpoint, device)
+    imageSize = int(checkpoint.get("imageSize", 64))
+    normalization = checkpoint.get("normalization", {})
+    mean = normalization.get("mean", [0.5, 0.5, 0.5])
+    std = normalization.get("std", [0.5, 0.5, 0.5])
 
     results = []
     for imagePath in collectImages(args):
         result = predictOne(
             model=model,
-            tensor=imageTensor(imagePath),
+            tensor=imageTensor(imagePath, imageSize=imageSize, mean=mean, std=std),
             idxToClass=idxToClass,
             device=device,
         )
@@ -146,6 +158,9 @@ def main() -> None:
             device=device,
             calibrationDir=Path(args.calibration_dir),
             outputPath=Path(args.emit_class_confidence),
+            imageSize=imageSize,
+            mean=mean,
+            std=std,
         )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
 

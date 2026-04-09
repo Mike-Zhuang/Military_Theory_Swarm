@@ -39,6 +39,10 @@ STATUS_VALUES: List[Literal["queued", "running", "succeeded", "failed", "cancell
 ]
 
 
+class JobCancelledError(RuntimeError):
+    pass
+
+
 def resolvePath(rawPath: str) -> Path:
     pathObj = Path(rawPath)
     if pathObj.is_absolute():
@@ -62,15 +66,26 @@ class DatasetPrepareRequest(BaseModel):
     subsetSizePerClass: int = Field(default=900, ge=120)
     valSubsetSizePerClass: int = Field(default=0, ge=0, le=20000)
     valRatio: float = Field(default=0.2, gt=0.05, lt=0.5)
+    useIgnoredAsDecoy: bool = False
     seed: int = 42
 
 
 class TrainJobRequest(BaseModel):
     dataDir: str = str(DEFAULT_DATASET_DIR)
-    epochs: int = Field(default=18, ge=1, le=200)
+    epochs: int = Field(default=80, ge=1, le=200)
     batchSize: int = Field(default=64, ge=8, le=256)
-    learningRate: float = Field(default=0.0006, gt=0.0, le=0.01)
+    learningRate: float = Field(default=0.0003, gt=0.0, le=0.01)
     numWorkers: int = Field(default=0, ge=0, le=8)
+    modelName: Literal["mobilenetv3-small", "tiny-cnn"] = "mobilenetv3-small"
+    pretrained: bool = True
+    freezeEpochs: int = Field(default=3, ge=0, le=50)
+    weightDecay: float = Field(default=1e-4, ge=0.0, le=0.1)
+    labelSmoothing: float = Field(default=0.05, ge=0.0, le=0.4)
+    scheduler: Literal["none", "cosine", "plateau"] = "cosine"
+    earlyStopPatience: int = Field(default=8, ge=1, le=50)
+    earlyStopMinDelta: float = Field(default=1e-3, ge=0.0, le=1.0)
+    augmentLevel: Literal["light", "medium", "strong"] = "medium"
+    imageSize: int = Field(default=128, ge=64, le=384)
     runName: str = ""
     evaluateAfterTrain: bool = True
 
@@ -104,6 +119,8 @@ class JobRecord:
     logs: List[str] = field(default_factory=list)
     runId: str | None = None
     artifacts: Dict[str, Any] = field(default_factory=dict)
+    cancelRequested: bool = False
+    activeProcess: subprocess.Popen[str] | None = None
 
     def appendLog(self, line: str) -> None:
         self.logs.append(line.rstrip())
@@ -138,6 +155,30 @@ class JobManager:
             raise HTTPException(status_code=404, detail=f"Job not found: {jobId}")
         return job
 
+    async def cancel(self, jobId: str) -> JobRecord:
+        async with self.lock:
+            job = self.jobs.get(jobId)
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job not found: {jobId}")
+            if job.status in {"succeeded", "failed", "cancelled"}:
+                return job
+
+            job.cancelRequested = True
+            job.appendLog("[cancel] 用户请求取消任务")
+            if job.status == "queued":
+                job.status = "cancelled"
+                job.finishedAt = time.time()
+                return job
+
+            activeProcess = job.activeProcess
+
+        if activeProcess and activeProcess.poll() is None:
+            try:
+                activeProcess.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+        return job
+
     async def runWorker(self) -> None:
         while True:
             jobId = await self.queue.get()
@@ -150,13 +191,22 @@ class JobManager:
             job.startedAt = time.time()
             try:
                 artifacts = await asyncio.to_thread(runJob, job)
-                job.status = "succeeded"
-                job.artifacts = artifacts
+                if job.cancelRequested:
+                    job.status = "cancelled"
+                    job.appendLog("[cancel] 任务已取消")
+                else:
+                    job.status = "succeeded"
+                    job.artifacts = artifacts
+            except JobCancelledError as error:
+                job.status = "cancelled"
+                job.error = str(error)
+                job.appendLog(f"[cancel] {error}")
             except Exception as error:  # noqa: BLE001
                 job.status = "failed"
                 job.error = str(error)
                 job.appendLog(f"[error] {error}")
             finally:
+                job.activeProcess = None
                 job.finishedAt = time.time()
                 self.queue.task_done()
 
@@ -194,29 +244,64 @@ def runCommand(command: List[str], cwd: Path, job: JobRecord) -> None:
             "PYTHONUNBUFFERED": "1",
         },
     )
+    job.activeProcess = process
     assert process.stdout is not None
     for line in process.stdout:
+        if job.cancelRequested:
+            try:
+                process.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+            break
         job.appendLog(line.rstrip())
+
+    if job.cancelRequested:
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        raise JobCancelledError("Job cancelled by user")
+
     code = process.wait()
     if code != 0:
         raise RuntimeError(f"Command failed with exit code {code}: {' '.join(command)}")
+    job.activeProcess = None
 
 
 def detectPathsByRun(runId: str) -> Dict[str, Path]:
     runDir = RUNS_DIR / runId
-    checkpoint = runDir / "checkpoints" / "tiny-cnn.pt"
-    history = runDir / "checkpoints" / "tiny-cnn.history.json"
-    summary = runDir / "checkpoints" / "tiny-cnn.summary.json"
-    curve = runDir / "checkpoints" / "tiny-cnn.curve.png"
+    checkpointDir = runDir / "checkpoints"
+    bestCheckpoint = checkpointDir / "best.pt"
+    lastCheckpoint = checkpointDir / "last.pt"
+    legacyCheckpoint = checkpointDir / "tiny-cnn.pt"
+    checkpoint = bestCheckpoint if bestCheckpoint.exists() else (lastCheckpoint if lastCheckpoint.exists() else legacyCheckpoint)
+    history = checkpointDir / "history.json"
+    summary = checkpointDir / "summary.json"
+    curve = checkpointDir / "curve.png"
+    curveLive = checkpointDir / "curve-live.png"
+    liveMetrics = checkpointDir / "live-metrics.jsonl"
+    progress = checkpointDir / "progress.json"
     classConfidence = runDir / "class-confidence.json"
     evalDir = runDir / "eval"
     sampleGrid = runDir / "sample-grid.png"
+    if not history.exists():
+        history = checkpointDir / "tiny-cnn.history.json"
+    if not summary.exists():
+        summary = checkpointDir / "tiny-cnn.summary.json"
+    if not curve.exists():
+        curve = checkpointDir / "tiny-cnn.curve.png"
     return {
         "runDir": runDir,
+        "checkpointDir": checkpointDir,
         "checkpoint": checkpoint,
+        "bestCheckpoint": bestCheckpoint,
+        "lastCheckpoint": lastCheckpoint,
         "history": history,
         "summary": summary,
         "curve": curve,
+        "curveLive": curveLive,
+        "liveMetrics": liveMetrics,
+        "progress": progress,
         "classConfidence": classConfidence,
         "evalDir": evalDir,
         "sampleGrid": sampleGrid,
@@ -236,9 +321,14 @@ def renderArtifactManifest(runId: str) -> Dict[str, Any]:
     payload = {
         "runId": runId,
         "checkpoint": existsUrl(paths["checkpoint"]),
+        "bestCheckpoint": existsUrl(paths["bestCheckpoint"]),
+        "lastCheckpoint": existsUrl(paths["lastCheckpoint"]),
         "history": existsUrl(paths["history"]),
         "summary": existsUrl(paths["summary"]),
         "trainingCurve": existsUrl(paths["curve"]),
+        "trainingCurveLive": existsUrl(paths["curveLive"]),
+        "liveMetrics": existsUrl(paths["liveMetrics"]),
+        "progress": existsUrl(paths["progress"]),
         "classConfidence": existsUrl(paths["classConfidence"]),
         "sampleGrid": existsUrl(paths["sampleGrid"]),
         "evaluationSummary": existsUrl(paths["evalDir"] / "evaluation-summary.json"),
@@ -248,6 +338,28 @@ def renderArtifactManifest(runId: str) -> Dict[str, Any]:
     ensureDir(paths["runDir"])
     paths["manifest"].write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
+
+
+def readProgressPayload(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def readLiveMetrics(path: Path, maxRows: int = 12) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    try:
+        for rawLine in path.read_text(encoding="utf-8").splitlines():
+            if rawLine.strip():
+                rows.append(json.loads(rawLine))
+    except Exception:  # noqa: BLE001
+        return []
+    return rows[-maxRows:]
 
 
 def runDatasetPrepare(job: JobRecord) -> Dict[str, Any]:
@@ -275,6 +387,8 @@ def runDatasetPrepare(job: JobRecord) -> Dict[str, Any]:
         "--seed",
         str(params.seed),
     ]
+    if params.useIgnoredAsDecoy:
+        command.append("--use-ignored-as-decoy")
     if params.trainImagesDir and params.trainAnnotationsDir:
         command.extend(
             [
@@ -325,7 +439,7 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
     job.runId = runId
 
     paths = detectPathsByRun(runId)
-    ensureDir(paths["checkpoint"].parent)
+    ensureDir(paths["checkpointDir"])
 
     dataDir = resolvePath(params.dataDir)
     if not (dataDir / "train").exists() or not (dataDir / "val").exists():
@@ -344,16 +458,40 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
         str(params.learningRate),
         "--num-workers",
         str(params.numWorkers),
+        "--model-name",
+        params.modelName,
+        "--freeze-epochs",
+        str(params.freezeEpochs),
+        "--weight-decay",
+        str(params.weightDecay),
+        "--label-smoothing",
+        str(params.labelSmoothing),
+        "--scheduler",
+        params.scheduler,
+        "--early-stop-patience",
+        str(params.earlyStopPatience),
+        "--early-stop-min-delta",
+        str(params.earlyStopMinDelta),
+        "--augment-level",
+        params.augmentLevel,
+        "--image-size",
+        str(params.imageSize),
         "--output",
-        str(paths["checkpoint"]),
+        str(paths["checkpointDir"] / "tiny-cnn.pt"),
+        "--output-dir",
+        str(paths["checkpointDir"]),
     ]
+    if not params.pretrained:
+        trainCommand.append("--no-pretrained")
     runCommand(trainCommand, ML_DIR, job)
+
+    bestCheckpoint = paths["bestCheckpoint"] if paths["bestCheckpoint"].exists() else paths["checkpoint"]
 
     inferCommand = [
         pythonBin(),
         "infer.py",
         "--checkpoint",
-        str(paths["checkpoint"]),
+        str(bestCheckpoint),
         "--calibration-dir",
         str(dataDir / "val"),
         "--emit-class-confidence",
@@ -378,7 +516,7 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
             pythonBin(),
             "evaluate.py",
             "--checkpoint",
-            str(paths["checkpoint"]),
+            str(bestCheckpoint),
             "--data-dir",
             str(dataDir),
             "--split",
@@ -435,6 +573,8 @@ def runEvaluate(job: JobRecord) -> Dict[str, Any]:
 def runJob(job: JobRecord) -> Dict[str, Any]:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     GENERATED_SCENARIO_DIR.mkdir(parents=True, exist_ok=True)
+    if job.cancelRequested:
+        raise JobCancelledError("Job cancelled before execution")
 
     if job.type == "dataset_prepare":
         return runDatasetPrepare(job)
@@ -458,7 +598,7 @@ def listRuns() -> List[Dict[str, Any]]:
         else:
             manifest = renderArtifactManifest(runId)
 
-        summaryPath = runDir / "checkpoints" / "tiny-cnn.summary.json"
+        summaryPath = detectPathsByRun(runId)["summary"]
         summary = {}
         if summaryPath.exists():
             summary = json.loads(summaryPath.read_text(encoding="utf-8"))
@@ -531,9 +671,39 @@ async def submitEvaluateJob(request: EvaluateJobRequest) -> Dict[str, Any]:
     }
 
 
+@app.post("/api/jobs/{jobId}/cancel")
+async def cancelJob(jobId: str) -> Dict[str, Any]:
+    job = await jobManager.cancel(jobId)
+    return {
+        "jobId": job.id,
+        "status": job.status,
+        "cancelRequested": job.cancelRequested,
+    }
+
+
 @app.get("/api/jobs/{jobId}")
 async def queryJob(jobId: str) -> Dict[str, Any]:
     job = await jobManager.get(jobId)
+    progress: Dict[str, Any] = {}
+    liveMetrics: List[Dict[str, Any]] = []
+    bestSnapshot: Dict[str, Any] = {}
+    if job.type == "train" and job.runId:
+        paths = detectPathsByRun(job.runId)
+        progress = readProgressPayload(paths["progress"])
+        liveMetrics = readLiveMetrics(paths["liveMetrics"])
+        summaryPath = paths["summary"]
+        if summaryPath.exists():
+            try:
+                summaryPayload = json.loads(summaryPath.read_text(encoding="utf-8"))
+                bestSnapshot = {
+                    "bestEpoch": summaryPayload.get("bestEpoch"),
+                    "bestValLoss": summaryPayload.get("bestValLoss"),
+                    "bestValAcc": summaryPayload.get("bestValAcc"),
+                    "lastValLoss": summaryPayload.get("lastValLoss"),
+                    "lastValAcc": summaryPayload.get("lastValAcc"),
+                }
+            except Exception:  # noqa: BLE001
+                bestSnapshot = {}
     return {
         "jobId": job.id,
         "type": job.type,
@@ -546,6 +716,9 @@ async def queryJob(jobId: str) -> Dict[str, Any]:
         "runId": job.runId,
         "artifacts": job.artifacts,
         "logs": job.logs[-120:],
+        "progress": progress,
+        "liveMetrics": liveMetrics,
+        "bestSnapshot": bestSnapshot,
     }
 
 

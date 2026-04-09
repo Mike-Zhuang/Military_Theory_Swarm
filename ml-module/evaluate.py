@@ -25,13 +25,14 @@ from infer import chooseDevice, loadModel
 
 
 def parseArgs() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate Tiny-CNN and export confusion matrix artifacts")
+    parser = argparse.ArgumentParser(description="Evaluate model and export confusion matrix artifacts")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data-dir", type=str, default="data/generated")
     parser.add_argument("--split", type=str, default="val", choices=["train", "val"])
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--output-dir", type=str, default="reports/eval")
+    parser.add_argument("--ece-bins", type=int, default=10)
     return parser.parse_args()
 
 
@@ -40,12 +41,15 @@ def buildLoader(
     split: str,
     batchSize: int,
     numWorkers: int,
+    imageSize: int,
+    mean: List[float],
+    std: List[float],
 ) -> Tuple[DataLoader, Dict[int, str]]:
     transform = transforms.Compose(
         [
-            transforms.Resize((64, 64)),
+            transforms.Resize((imageSize, imageSize)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+            transforms.Normalize(mean=mean, std=std),
         ]
     )
     dataset = datasets.ImageFolder(root=str(dataDir / split), transform=transform)
@@ -61,6 +65,32 @@ def emptyMatrix(classNames: List[str]) -> Dict[str, Dict[str, int]]:
     }
 
 
+def safeDivide(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator > 0 else 0.0
+
+
+def computeExpectedCalibrationError(
+    confidences: List[float],
+    correctness: List[int],
+    bins: int,
+) -> float:
+    if not confidences:
+        return 0.0
+
+    total = len(confidences)
+    ece = 0.0
+    for binIndex in range(bins):
+        lower = binIndex / bins
+        upper = (binIndex + 1) / bins
+        members = [index for index, confidence in enumerate(confidences) if lower <= confidence < upper or (binIndex == bins - 1 and confidence == 1.0)]
+        if not members:
+            continue
+        binAcc = sum(correctness[index] for index in members) / len(members)
+        binConf = sum(confidences[index] for index in members) / len(members)
+        ece += (len(members) / total) * abs(binAcc - binConf)
+    return ece
+
+
 def evaluate(
     checkpointPath: str,
     dataDir: Path,
@@ -68,10 +98,24 @@ def evaluate(
     batchSize: int,
     numWorkers: int,
     outputDir: Path,
+    eceBins: int,
 ) -> Dict[str, object]:
     device = chooseDevice()
-    model, idxToClass = loadModel(checkpointPath, device)
-    loader, datasetIdxToClass = buildLoader(dataDir, split, batchSize, numWorkers)
+    model, idxToClass, checkpoint = loadModel(checkpointPath, device)
+    imageSize = int(checkpoint.get("imageSize", 64))
+    normalization = checkpoint.get("normalization", {})
+    mean = normalization.get("mean", [0.5, 0.5, 0.5])
+    std = normalization.get("std", [0.5, 0.5, 0.5])
+
+    loader, datasetIdxToClass = buildLoader(
+        dataDir=dataDir,
+        split=split,
+        batchSize=batchSize,
+        numWorkers=numWorkers,
+        imageSize=imageSize,
+        mean=mean,
+        std=std,
+    )
 
     if idxToClass != datasetIdxToClass:
         raise SystemExit("Checkpoint class mapping does not match dataset class mapping.")
@@ -80,7 +124,10 @@ def evaluate(
     confusion = emptyMatrix(classNames)
     totals = {className: 0 for className in classNames}
     correctByClass = {className: 0 for className in classNames}
+    predictedCount = {className: 0 for className in classNames}
 
+    confidences: List[float] = []
+    correctness: List[int] = []
     totalCount = 0
     totalCorrect = 0
 
@@ -89,34 +136,69 @@ def evaluate(
             images = images.to(device)
             labels = labels.to(device)
             logits = model(images)
-            predicted = logits.argmax(dim=1)
+            probs = torch.softmax(logits, dim=1)
+            confidenceTensor, predictedTensor = probs.max(dim=1)
 
-            for actualIdx, predictedIdx in zip(labels.cpu().tolist(), predicted.cpu().tolist()):
+            for actualIdx, predictedIdx, confidence in zip(
+                labels.cpu().tolist(),
+                predictedTensor.cpu().tolist(),
+                confidenceTensor.cpu().tolist(),
+            ):
                 actualClass = idxToClass[int(actualIdx)]
                 predictedClass = idxToClass[int(predictedIdx)]
                 confusion[actualClass][predictedClass] += 1
                 totals[actualClass] += 1
+                predictedCount[predictedClass] += 1
                 totalCount += 1
-                if actualIdx == predictedIdx:
+                isCorrect = 1 if actualIdx == predictedIdx else 0
+                if isCorrect:
                     correctByClass[actualClass] += 1
                     totalCorrect += 1
+                confidences.append(float(confidence))
+                correctness.append(isCorrect)
 
     perClass = {}
+    macroF1 = 0.0
     for className in classNames:
         support = totals[className]
         correct = correctByClass[className]
-        accuracy = correct / max(1, support)
+        precision = safeDivide(correct, predictedCount[className])
+        recall = safeDivide(correct, support)
+        f1 = safeDivide(2 * precision * recall, precision + recall)
+        macroF1 += f1
         perClass[className] = {
             "support": support,
-            "accuracy": round(accuracy, 4),
+            "accuracy": round(safeDivide(correct, support), 4),
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "f1": round(f1, 4),
         }
+    macroF1 = safeDivide(macroF1, len(classNames))
+    ece = computeExpectedCalibrationError(confidences=confidences, correctness=correctness, bins=eceBins)
+
+    summaryPath = Path(checkpointPath).with_name("summary.json")
+    legacySummaryPath = Path(checkpointPath).with_name("tiny-cnn.summary.json")
+    trainSummary = {}
+    if summaryPath.exists():
+        trainSummary = json.loads(summaryPath.read_text(encoding="utf-8"))
+    elif legacySummaryPath.exists():
+        trainSummary = json.loads(legacySummaryPath.read_text(encoding="utf-8"))
 
     summary = {
         "split": split,
         "samples": totalCount,
         "overallAccuracy": round(totalCorrect / max(1, totalCount), 4),
+        "macroF1": round(macroF1, 4),
+        "ece": round(ece, 4),
         "perClass": perClass,
         "confusionMatrix": confusion,
+        "modelName": checkpoint.get("modelName", "tiny-cnn"),
+        "bestEpoch": checkpoint.get("bestEpoch", trainSummary.get("bestEpoch")),
+        "bestValLoss": checkpoint.get("bestValLoss", trainSummary.get("bestValLoss")),
+        "bestValAcc": checkpoint.get("bestValAcc", trainSummary.get("bestValAcc")),
+        "lastValLoss": trainSummary.get("lastValLoss"),
+        "lastValAcc": trainSummary.get("lastValAcc"),
+        "generalizationGapAtBest": trainSummary.get("generalizationGapAtBest"),
     }
 
     outputDir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +226,7 @@ def plotConfusionMatrix(
         [confusion[actualClass][predictedClass] for predictedClass in classNames]
         for actualClass in classNames
     ]
+    maxValue = max(1, max(max(row) for row in matrix))
 
     plt.figure(figsize=(6.4, 5.2))
     plt.imshow(matrix, cmap="Blues")
@@ -156,7 +239,7 @@ def plotConfusionMatrix(
 
     for rowIndex, row in enumerate(matrix):
         for colIndex, value in enumerate(row):
-            color = "white" if value > max(1, max(map(max, matrix))) * 0.45 else "#173042"
+            color = "white" if value > maxValue * 0.45 else "#173042"
             plt.text(colIndex, rowIndex, str(value), ha="center", va="center", color=color)
 
     plt.tight_layout()
@@ -173,6 +256,7 @@ def main() -> None:
         batchSize=args.batch_size,
         numWorkers=args.num_workers,
         outputDir=Path(args.output_dir),
+        eceBins=args.ece_bins,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
