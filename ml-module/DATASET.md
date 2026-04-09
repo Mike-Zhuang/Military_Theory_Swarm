@@ -1,4 +1,4 @@
-# 数据集说明（V2.1）
+# 数据集说明（V3.1）
 
 当前项目采用“双轨数据策略”：
 
@@ -28,7 +28,7 @@ python data/prepare_visdrone.py \
   --val-annotations-dir data/visdrone/raw/VisDrone2019-DET-val/annotations \
   --output-dir data/visdrone-ready \
   --subset-size-per-class 900 \
-  --val-subset-size-per-class 0
+  --dev-val-size-per-class 360
 ```
 
 如需做对照实验，才开启 `ignored-region` 作为 decoy：
@@ -66,7 +66,11 @@ data/visdrone-ready/
 │   ├── vehicle/
 │   ├── civilian-object/
 │   └── decoy/
-├── val/
+├── dev-val/
+│   ├── vehicle/
+│   ├── civilian-object/
+│   └── decoy/
+├── official-val/
 │   ├── vehicle/
 │   ├── civilian-object/
 │   └── decoy/
@@ -76,7 +80,8 @@ data/visdrone-ready/
 `manifest.json` 现包含：
 
 - `splitMode` 与数据源路径
-- train/val 原始候选数量与最终输出数量
+- `train/dev-val/official-val` 原始候选数量与最终输出数量
+- `monitorSplit=dev-val`，用于训练期早停和前端实时曲线
 - 小框过滤、越界过滤、未知类别过滤统计
 - 标签质量统计（`ignoredUsedCount / ignoredSkippedCount / backgroundNegativeCount`）
 - 类别映射规则（便于答辩时说明）
@@ -101,17 +106,21 @@ python train.py \
   --learning-rate 0.0003 \
   --weight-decay 0.0001 \
   --label-smoothing 0.05 \
+  --loss-type focal \
+  --focal-gamma 1.5 \
   --freeze-epochs 3 \
   --scheduler cosine \
   --early-stop-patience 8 \
   --early-stop-min-delta 0.001 \
   --augment-level medium \
   --image-size 128 \
+  --monitor-split dev-val \
+  --official-split official-val \
   --output runs/manual/checkpoints/tiny-cnn.pt
 
-python infer.py --checkpoint runs/manual/checkpoints/best.pt --calibration-dir data/visdrone-ready/val --emit-class-confidence runs/manual/class-confidence.json
-python evaluate.py --checkpoint runs/manual/checkpoints/best.pt --data-dir data/visdrone-ready --split val --output-dir runs/manual/eval
-python render_sample_grid.py --data-dir data/visdrone-ready --split val --output runs/manual/sample-grid.png
+python infer.py --checkpoint runs/manual/checkpoints/best.pt --calibration-dir data/visdrone-ready/official-val --emit-class-confidence runs/manual/class-confidence.json
+python evaluate.py --checkpoint runs/manual/checkpoints/best.pt --data-dir data/visdrone-ready --split official-val --output-dir runs/manual/eval
+python render_sample_grid.py --data-dir data/visdrone-ready --split official-val --output runs/manual/sample-grid.png
 ```
 
 训练阶段会持续生成：
@@ -119,6 +128,10 @@ python render_sample_grid.py --data-dir data/visdrone-ready --split val --output
 - `checkpoints/live-metrics.jsonl`（实时指标）
 - `checkpoints/curve-live.png`（实时曲线）
 - `checkpoints/best.pt` 与 `checkpoints/last.pt`
+- `summary.json` 中会同时写入：
+  - `bestDevValLoss / bestDevValAcc`
+  - `officialValLoss / officialValAcc / officialMacroF1 / officialEce`
+  - `lossGapReason`（解释为什么官方验证集 loss 通常更高）
 
 ## 4) 关于“训练看起来很快”
 

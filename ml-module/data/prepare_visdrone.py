@@ -96,6 +96,7 @@ def parseArgs() -> argparse.Namespace:
         default="https://github.com/VisDrone/VisDrone-Dataset/releases/download/v1.0/VisDrone2019-DET-train.zip",
     )
     parser.add_argument("--subset-size-per-class", type=int, default=900)
+    parser.add_argument("--dev-val-size-per-class", type=int, default=360)
     parser.add_argument("--val-subset-size-per-class", type=int, default=0)
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--min-box-size", type=int, default=16)
@@ -313,12 +314,14 @@ def splitTrainVal(
 ) -> Dict[str, Dict[str, List[CropCandidate]]]:
     output: Dict[str, Dict[str, List[CropCandidate]]] = {
         "train": {"vehicle": [], "civilian-object": [], "decoy": []},
-        "val": {"vehicle": [], "civilian-object": [], "decoy": []},
+        "dev-val": {"vehicle": [], "civilian-object": [], "decoy": []},
+        "official-val": {"vehicle": [], "civilian-object": [], "decoy": []},
     }
     for className, items in selected.items():
         splitIdx = int(len(items) * (1.0 - valRatio))
         output["train"][className] = items[:splitIdx]
-        output["val"][className] = items[splitIdx:]
+        output["dev-val"][className] = items[splitIdx:]
+        output["official-val"][className] = list(output["dev-val"][className])
     return output
 
 
@@ -336,12 +339,10 @@ def sourcePayload(name: str, imagesDir: Path, annDir: Path, stats: SourceStats) 
 
 
 def saveCrops(outputDir: Path, splitItems: Dict[str, Dict[str, List[CropCandidate]]]) -> Dict[str, Dict[str, int]]:
-    counts: Dict[str, Dict[str, int]] = {
-        "train": {"vehicle": 0, "civilian-object": 0, "decoy": 0},
-        "val": {"vehicle": 0, "civilian-object": 0, "decoy": 0},
-    }
+    counts: Dict[str, Dict[str, int]] = {}
 
     for splitName, byClass in splitItems.items():
+        counts[splitName] = {"vehicle": 0, "civilian-object": 0, "decoy": 0}
         for className, items in byClass.items():
             saveDir = ensureDir(outputDir / splitName / className)
             for idx, candidate in enumerate(items):
@@ -439,26 +440,33 @@ def main() -> None:
             subsetSizePerClass=args.subset_size_per_class,
             rng=random.Random(args.seed + 17),
         )
+        devValSizePerClass = args.dev_val_size_per_class
         if args.val_subset_size_per_class > 0:
-            valSelected = chooseSubset(
+            devValSizePerClass = args.val_subset_size_per_class
+
+        if devValSizePerClass > 0:
+            devValSelected = chooseSubset(
                 grouped=valGrouped,
-                subsetSizePerClass=args.val_subset_size_per_class,
+                subsetSizePerClass=devValSizePerClass,
                 rng=random.Random(args.seed + 41),
             )
         else:
-            valSelected = {className: list(items) for className, items in valGrouped.items()}
+            devValSelected = {className: list(items) for className, items in valGrouped.items()}
 
         splitItems = {
             "train": trainSelected,
-            "val": valSelected,
+            "dev-val": devValSelected,
+            "official-val": {className: list(items) for className, items in valGrouped.items()},
         }
         candidateCounts = {
             "train": selectedCountByClass(trainGrouped),
-            "val": selectedCountByClass(valGrouped),
+            "dev-val": selectedCountByClass(valGrouped),
+            "official-val": selectedCountByClass(valGrouped),
         }
         selectedCounts = {
             "train": selectedCountByClass(trainSelected),
-            "val": selectedCountByClass(valSelected),
+            "dev-val": selectedCountByClass(devValSelected),
+            "official-val": selectedCountByClass(valGrouped),
         }
     else:
         trainSelected = chooseSubset(
@@ -469,10 +477,13 @@ def main() -> None:
         splitItems = splitTrainVal(trainSelected, valRatio=args.val_ratio)
         candidateCounts = {
             "train": selectedCountByClass(trainGrouped),
+            "dev-val": selectedCountByClass(splitItems["dev-val"]),
+            "official-val": selectedCountByClass(splitItems["official-val"]),
         }
         selectedCounts = {
             "train": selectedCountByClass(splitItems["train"]),
-            "val": selectedCountByClass(splitItems["val"]),
+            "dev-val": selectedCountByClass(splitItems["dev-val"]),
+            "official-val": selectedCountByClass(splitItems["official-val"]),
         }
 
     ensureDir(outputDir)
@@ -485,12 +496,16 @@ def main() -> None:
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "sources": sources,
         "subsetSizePerClass": args.subset_size_per_class,
+        "devValSizePerClass": args.dev_val_size_per_class,
         "valSubsetSizePerClass": args.val_subset_size_per_class,
         "valRatio": args.val_ratio,
         "seed": args.seed,
         "candidateCounts": candidateCounts,
         "selectedCounts": selectedCounts,
         "outputCounts": counts,
+        "monitorSplit": "dev-val",
+        "devValCounts": counts.get("dev-val", {}),
+        "officialValCounts": counts.get("official-val", {}),
         "classes": ["vehicle", "civilian-object", "decoy"],
         "mappingRules": {
             "vehicle": sorted(VEHICLE_CATEGORIES),

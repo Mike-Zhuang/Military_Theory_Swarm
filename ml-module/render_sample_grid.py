@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render dataset sample grid for UI preview")
     parser.add_argument("--data-dir", type=str, required=True)
-    parser.add_argument("--split", type=str, default="val")
+    parser.add_argument("--split", type=str, default="official-val")
     parser.add_argument("--samples-per-class", type=int, default=6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", type=str, required=True)
@@ -20,6 +20,9 @@ def parseArgs() -> argparse.Namespace:
 
 def collectSamples(dataDir: Path, split: str, samplesPerClass: int, rng: random.Random) -> Dict[str, List[Path]]:
     splitDir = dataDir / split
+    if not splitDir.exists() and split == "official-val":
+        fallbackDir = dataDir / "val"
+        splitDir = fallbackDir if fallbackDir.exists() else dataDir / "dev-val"
     if not splitDir.exists():
         raise RuntimeError(f"Split directory not found: {splitDir}")
 

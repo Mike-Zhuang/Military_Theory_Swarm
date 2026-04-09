@@ -19,8 +19,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
+import torch.nn.functional as functional
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torchvision import datasets, transforms
 
 from model import MODEL_NAMES, buildModel, setBackboneFrozen
@@ -29,8 +30,26 @@ IMAGE_NET_MEAN = [0.485, 0.456, 0.406]
 IMAGE_NET_STD = [0.229, 0.224, 0.225]
 
 
+class FocalLoss(nn.Module):
+    def __init__(self, gamma: float, labelSmoothing: float) -> None:
+        super().__init__()
+        self.gamma = gamma
+        self.labelSmoothing = labelSmoothing
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        ceLoss = functional.cross_entropy(
+            logits,
+            targets,
+            reduction="none",
+            label_smoothing=self.labelSmoothing,
+        )
+        pt = torch.exp(-ceLoss)
+        focalLoss = ((1.0 - pt) ** self.gamma) * ceLoss
+        return focalLoss.mean()
+
+
 def parseArgs() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train classification model with anti-overfitting defaults")
+    parser = argparse.ArgumentParser(description="Train classification model with dual-validation monitoring")
     parser.add_argument("--data-dir", type=str, default="data/generated")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -47,10 +66,16 @@ def parseArgs() -> argparse.Namespace:
     parser.add_argument("--early-stop-min-delta", type=float, default=1e-3)
     parser.add_argument("--augment-level", type=str, default="medium", choices=["light", "medium", "strong"])
     parser.add_argument("--image-size", type=int, default=128)
+    parser.add_argument("--loss-type", type=str, default="focal", choices=["cross-entropy", "focal"])
+    parser.add_argument("--focal-gamma", type=float, default=1.5)
+    parser.add_argument("--balanced-sampler", dest="balancedSampler", action="store_true")
+    parser.add_argument("--no-balanced-sampler", dest="balancedSampler", action="store_false")
+    parser.add_argument("--monitor-split", type=str, default="dev-val")
+    parser.add_argument("--official-split", type=str, default="official-val")
     parser.add_argument("--output", type=str, default="checkpoints/tiny-cnn.pt")
     parser.add_argument("--output-dir", type=str, default="")
     parser.add_argument("--seed", type=int, default=42)
-    parser.set_defaults(pretrained=True)
+    parser.set_defaults(pretrained=True, balancedSampler=True)
     return parser.parse_args()
 
 
@@ -60,6 +85,14 @@ def chooseDevice() -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
+
+
+def resolveSplitDir(dataDir: Path, preferredNames: List[str]) -> Tuple[Path, str]:
+    for splitName in preferredNames:
+        candidate = dataDir / splitName
+        if candidate.exists():
+            return candidate, splitName
+    raise RuntimeError(f"Split directory not found, candidates={preferredNames}, dataDir={dataDir}")
 
 
 def buildTransforms(imageSize: int, augmentLevel: str) -> Tuple[transforms.Compose, transforms.Compose]:
@@ -75,45 +108,48 @@ def buildTransforms(imageSize: int, augmentLevel: str) -> Tuple[transforms.Compo
         transforms.RandomHorizontalFlip(p=0.5),
     ]
     medium = [
-        transforms.RandomResizedCrop(size=imageSize, scale=(0.78, 1.0), ratio=(0.8, 1.2)),
+        transforms.RandomResizedCrop(size=imageSize, scale=(0.84, 1.0), ratio=(0.88, 1.12)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ColorJitter(brightness=0.18, contrast=0.18, saturation=0.18, hue=0.03),
+        transforms.ColorJitter(brightness=0.12, contrast=0.12, saturation=0.12, hue=0.02),
     ]
     strong = [
-        transforms.RandomResizedCrop(size=imageSize, scale=(0.65, 1.0), ratio=(0.75, 1.33)),
+        transforms.RandomResizedCrop(size=imageSize, scale=(0.74, 1.0), ratio=(0.8, 1.2)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.ColorJitter(brightness=0.28, contrast=0.28, saturation=0.28, hue=0.06),
-        transforms.RandomAffine(degrees=12, translate=(0.08, 0.08)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.04),
+        transforms.RandomAffine(degrees=8, translate=(0.05, 0.05)),
     ]
-
-    augmentByLevel = {
-        "light": light,
-        "medium": medium,
-        "strong": strong,
-    }
 
     trainTransform = transforms.Compose(
         [
-            *augmentByLevel[augmentLevel],
+            *(light if augmentLevel == "light" else medium if augmentLevel == "medium" else strong),
             transforms.ToTensor(),
             transforms.Normalize(mean=IMAGE_NET_MEAN, std=IMAGE_NET_STD),
-            transforms.RandomErasing(p=0.2 if augmentLevel == "strong" else 0.12, scale=(0.02, 0.16)),
+            transforms.RandomErasing(p=0.08 if augmentLevel == "light" else 0.12, scale=(0.02, 0.12)),
         ]
     )
     return trainTransform, evalTransform
 
 
-def classWeightsFromDataset(dataset: datasets.ImageFolder) -> torch.Tensor:
-    labelCounts: Dict[int, int] = {}
+def countSamplesByClass(dataset: datasets.ImageFolder) -> Dict[str, int]:
+    countsByIndex: Dict[int, int] = {}
     for _, classIndex in dataset.samples:
-        labelCounts[classIndex] = labelCounts.get(classIndex, 0) + 1
-    total = sum(labelCounts.values())
-    classCount = len(dataset.class_to_idx)
-    weights: List[float] = []
-    for classIndex in range(classCount):
-        classSamples = max(1, labelCounts.get(classIndex, 0))
-        weights.append(total / (classCount * classSamples))
-    return torch.tensor(weights, dtype=torch.float32)
+        countsByIndex[classIndex] = countsByIndex.get(classIndex, 0) + 1
+    return {
+        className: countsByIndex.get(classIndex, 0)
+        for className, classIndex in sorted(dataset.class_to_idx.items(), key=lambda item: item[1])
+    }
+
+
+def buildSampler(dataset: datasets.ImageFolder) -> WeightedRandomSampler:
+    countsByIndex: Dict[int, int] = {}
+    for _, classIndex in dataset.samples:
+        countsByIndex[classIndex] = countsByIndex.get(classIndex, 0) + 1
+    sampleWeights = [1.0 / max(1, countsByIndex[classIndex]) for _, classIndex in dataset.samples]
+    return WeightedRandomSampler(
+        weights=torch.tensor(sampleWeights, dtype=torch.double),
+        num_samples=len(sampleWeights),
+        replacement=True,
+    )
 
 
 def buildLoaders(
@@ -122,26 +158,66 @@ def buildLoaders(
     augmentLevel: str,
     batchSize: int,
     numWorkers: int,
-) -> Tuple[DataLoader, DataLoader, datasets.ImageFolder, datasets.ImageFolder]:
+    monitorSplit: str,
+    officialSplit: str,
+    balancedSampler: bool,
+) -> Tuple[Dict[str, DataLoader], Dict[str, datasets.ImageFolder], Dict[str, str]]:
+    dataRoot = Path(dataDir)
     trainTransform, evalTransform = buildTransforms(imageSize=imageSize, augmentLevel=augmentLevel)
-    trainDataset = datasets.ImageFolder(root=str(Path(dataDir) / "train"), transform=trainTransform)
-    valDataset = datasets.ImageFolder(root=str(Path(dataDir) / "val"), transform=evalTransform)
 
+    trainDir, trainSplit = resolveSplitDir(dataRoot, ["train"])
+    monitorDir, resolvedMonitorSplit = resolveSplitDir(dataRoot, [monitorSplit, "dev-val", "val"])
+    officialDir, resolvedOfficialSplit = resolveSplitDir(
+        dataRoot,
+        [officialSplit, "official-val", resolvedMonitorSplit, "val"],
+    )
+
+    datasetsBySplit = {
+        "train": datasets.ImageFolder(root=str(trainDir), transform=trainTransform),
+        "monitor": datasets.ImageFolder(root=str(monitorDir), transform=evalTransform),
+        "official": datasets.ImageFolder(root=str(officialDir), transform=evalTransform),
+    }
+
+    trainSampler = buildSampler(datasetsBySplit["train"]) if balancedSampler else None
     trainLoader = DataLoader(
-        trainDataset,
+        datasetsBySplit["train"],
         batch_size=batchSize,
-        shuffle=True,
+        shuffle=trainSampler is None,
+        sampler=trainSampler,
         num_workers=numWorkers,
         pin_memory=False,
     )
-    valLoader = DataLoader(
-        valDataset,
+
+    monitorLoader = DataLoader(
+        datasetsBySplit["monitor"],
         batch_size=batchSize,
         shuffle=False,
         num_workers=numWorkers,
         pin_memory=False,
     )
-    return trainLoader, valLoader, trainDataset, valDataset
+    officialLoader = DataLoader(
+        datasetsBySplit["official"],
+        batch_size=batchSize,
+        shuffle=False,
+        num_workers=numWorkers,
+        pin_memory=False,
+    )
+
+    return {
+        "train": trainLoader,
+        "monitor": monitorLoader,
+        "official": officialLoader,
+    }, datasetsBySplit, {
+        "train": trainSplit,
+        "monitor": resolvedMonitorSplit,
+        "official": resolvedOfficialSplit,
+    }
+
+
+def createCriterion(lossType: str, labelSmoothing: float, focalGamma: float) -> nn.Module:
+    if lossType == "focal":
+        return FocalLoss(gamma=focalGamma, labelSmoothing=labelSmoothing)
+    return nn.CrossEntropyLoss(label_smoothing=labelSmoothing)
 
 
 def runEpoch(
@@ -150,13 +226,16 @@ def runEpoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
-) -> Tuple[float, float]:
+    highConfidenceThreshold: float = 0.9,
+) -> Dict[str, float]:
     isTrain = optimizer is not None
     model.train(isTrain)
 
     totalLoss = 0.0
     correct = 0
     count = 0
+    totalConfidence = 0.0
+    wrongHighConfidenceCount = 0
 
     for images, labels in loader:
         images = images.to(device)
@@ -172,14 +251,123 @@ def runEpoch(
             loss.backward()
             optimizer.step()
 
+        probabilities = torch.softmax(logits, dim=1)
+        maxProbabilities, predicted = probabilities.max(dim=1)
+
         totalLoss += float(loss.item()) * labels.size(0)
-        predicted = logits.argmax(dim=1)
         correct += int((predicted == labels).sum().item())
         count += labels.size(0)
+        totalConfidence += float(maxProbabilities.sum().item())
+        wrongHighConfidenceCount += int(((predicted != labels) & (maxProbabilities >= highConfidenceThreshold)).sum().item())
 
-    avgLoss = totalLoss / max(1, count)
-    accuracy = correct / max(1, count)
-    return avgLoss, accuracy
+    return {
+        "loss": totalLoss / max(1, count),
+        "accuracy": correct / max(1, count),
+        "maxProbMean": totalConfidence / max(1, count),
+        "wrongHighConfidenceCount": wrongHighConfidenceCount,
+    }
+
+
+def evaluateDetailed(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    idxToClass: Dict[int, str],
+    device: torch.device,
+    eceBins: int = 10,
+    highConfidenceThreshold: float = 0.9,
+) -> Dict[str, object]:
+    classNames = [idxToClass[idx] for idx in sorted(idxToClass)]
+    confusion = {
+        actualClass: {predictedClass: 0 for predictedClass in classNames}
+        for actualClass in classNames
+    }
+    totals = {className: 0 for className in classNames}
+    predictedCount = {className: 0 for className in classNames}
+    correctByClass = {className: 0 for className in classNames}
+
+    totalLoss = 0.0
+    totalCount = 0
+    totalCorrect = 0
+    totalConfidence = 0.0
+    wrongHighConfidenceCount = 0
+    confidences: List[float] = []
+    correctness: List[int] = []
+
+    model.eval()
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device)
+            labels = labels.to(device)
+            logits = model(images)
+            loss = criterion(logits, labels)
+            probabilities = torch.softmax(logits, dim=1)
+            maxProbabilities, predicted = probabilities.max(dim=1)
+
+            totalLoss += float(loss.item()) * labels.size(0)
+            totalCount += labels.size(0)
+            totalConfidence += float(maxProbabilities.sum().item())
+            wrongHighConfidenceCount += int(((predicted != labels) & (maxProbabilities >= highConfidenceThreshold)).sum().item())
+
+            for actualIndex, predictedIndex, confidence in zip(
+                labels.cpu().tolist(),
+                predicted.cpu().tolist(),
+                maxProbabilities.cpu().tolist(),
+            ):
+                actualClass = idxToClass[int(actualIndex)]
+                predictedClass = idxToClass[int(predictedIndex)]
+                confusion[actualClass][predictedClass] += 1
+                totals[actualClass] += 1
+                predictedCount[predictedClass] += 1
+                isCorrect = 1 if actualIndex == predictedIndex else 0
+                totalCorrect += isCorrect
+                correctByClass[actualClass] += isCorrect
+                confidences.append(float(confidence))
+                correctness.append(isCorrect)
+
+    perClass = {}
+    macroF1 = 0.0
+    for className in classNames:
+        precision = correctByClass[className] / max(1, predictedCount[className])
+        recall = correctByClass[className] / max(1, totals[className])
+        f1 = 0.0 if precision + recall == 0.0 else 2.0 * precision * recall / (precision + recall)
+        macroF1 += f1
+        perClass[className] = {
+            "support": totals[className],
+            "accuracy": round(correctByClass[className] / max(1, totals[className]), 4),
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "f1": round(f1, 4),
+        }
+    macroF1 = macroF1 / max(1, len(classNames))
+
+    ece = 0.0
+    if confidences:
+        for binIndex in range(eceBins):
+            lower = binIndex / eceBins
+            upper = (binIndex + 1) / eceBins
+            members = [
+                index
+                for index, confidence in enumerate(confidences)
+                if lower <= confidence < upper or (binIndex == eceBins - 1 and confidence == 1.0)
+            ]
+            if not members:
+                continue
+            binAccuracy = sum(correctness[index] for index in members) / len(members)
+            binConfidence = sum(confidences[index] for index in members) / len(members)
+            ece += (len(members) / len(confidences)) * abs(binAccuracy - binConfidence)
+
+    return {
+        "loss": totalLoss / max(1, totalCount),
+        "accuracy": totalCorrect / max(1, totalCount),
+        "macroF1": macroF1,
+        "ece": ece,
+        "maxProbMean": totalConfidence / max(1, totalCount),
+        "wrongHighConfidenceCount": wrongHighConfidenceCount,
+        "perClass": perClass,
+        "confusionMatrix": confusion,
+        "samples": totalCount,
+    }
 
 
 def saveCurve(history: List[Dict[str, float]], outputPath: Path) -> None:
@@ -188,13 +376,13 @@ def saveCurve(history: List[Dict[str, float]], outputPath: Path) -> None:
 
     epochs = [int(item["epoch"]) for item in history]
     trainLoss = [float(item["trainLoss"]) for item in history]
-    valLoss = [float(item["valLoss"]) for item in history]
+    devValLoss = [float(item["devValLoss"]) for item in history]
     trainAcc = [float(item["trainAcc"]) for item in history]
-    valAcc = [float(item["valAcc"]) for item in history]
+    devValAcc = [float(item["devValAcc"]) for item in history]
 
     fig, axes = plt.subplots(1, 2, figsize=(10.6, 4.2))
     axes[0].plot(epochs, trainLoss, marker="o", label="train")
-    axes[0].plot(epochs, valLoss, marker="s", label="val")
+    axes[0].plot(epochs, devValLoss, marker="s", label="dev-val")
     axes[0].set_title("Loss")
     axes[0].set_xlabel("Epoch")
     axes[0].set_ylabel("Cross Entropy")
@@ -202,7 +390,7 @@ def saveCurve(history: List[Dict[str, float]], outputPath: Path) -> None:
     axes[0].legend()
 
     axes[1].plot(epochs, trainAcc, marker="o", label="train")
-    axes[1].plot(epochs, valAcc, marker="s", label="val")
+    axes[1].plot(epochs, devValAcc, marker="s", label="dev-val")
     axes[1].set_title("Accuracy")
     axes[1].set_xlabel("Epoch")
     axes[1].set_ylabel("Accuracy")
@@ -229,8 +417,8 @@ def saveCheckpoint(
     imageSize: int,
     history: List[Dict[str, float]],
     bestEpoch: int,
-    bestValLoss: float,
-    bestValAcc: float,
+    bestDevValLoss: float,
+    bestDevValAcc: float,
 ) -> None:
     payload = {
         "stateDict": model.state_dict(),
@@ -243,8 +431,10 @@ def saveCheckpoint(
         },
         "history": history,
         "bestEpoch": bestEpoch,
-        "bestValLoss": round(bestValLoss, 6),
-        "bestValAcc": round(bestValAcc, 6),
+        "bestDevValLoss": round(bestDevValLoss, 6),
+        "bestDevValAcc": round(bestDevValAcc, 6),
+        "bestValLoss": round(bestDevValLoss, 6),
+        "bestValAcc": round(bestDevValAcc, 6),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, path)
@@ -271,6 +461,28 @@ def pickOutputPaths(args: argparse.Namespace) -> Dict[str, Path]:
     }
 
 
+def loadCheckpointModel(checkpointPath: Path, device: torch.device) -> Tuple[nn.Module, Dict[int, str]]:
+    payload = torch.load(checkpointPath, map_location=device)
+    classToIdx = payload["classToIdx"]
+    idxToClass = {index: className for className, index in classToIdx.items()}
+    model = buildModel(
+        modelName=payload.get("modelName", "tiny-cnn"),
+        classCount=len(classToIdx),
+        pretrained=False,
+    ).to(device)
+    model.load_state_dict(payload["stateDict"])
+    model.eval()
+    return model, idxToClass
+
+
+def describeLossGapReason(trainSamples: int, monitorSamples: int, officialSamples: int) -> str:
+    if officialSamples > max(trainSamples * 4, monitorSamples * 4):
+        return "official-val 更大且类别更不均衡，loss 通常会显著高于训练期 dev-val。"
+    if officialSamples > monitorSamples:
+        return "official-val 分布更接近真实场景，因此 loss 会高于训练监控集。"
+    return "训练期与最终评估集规模接近，loss 差距主要来自样本难度与过置信。"
+
+
 def main() -> None:
     args = parseArgs()
     random.seed(args.seed)
@@ -283,15 +495,25 @@ def main() -> None:
     if paths["liveMetrics"].exists():
         paths["liveMetrics"].unlink()
 
-    trainLoader, valLoader, trainDataset, valDataset = buildLoaders(
+    loaders, datasetsBySplit, resolvedSplits = buildLoaders(
         dataDir=args.data_dir,
         imageSize=args.image_size,
         augmentLevel=args.augment_level,
         batchSize=args.batch_size,
         numWorkers=args.num_workers,
+        monitorSplit=args.monitor_split,
+        officialSplit=args.official_split,
+        balancedSampler=args.balancedSampler,
     )
-    if len(trainDataset) == 0 or len(valDataset) == 0:
-        raise SystemExit(f"Dataset is empty: train={len(trainDataset)} val={len(valDataset)}")
+
+    trainDataset = datasetsBySplit["train"]
+    monitorDataset = datasetsBySplit["monitor"]
+    officialDataset = datasetsBySplit["official"]
+
+    if len(trainDataset) == 0 or len(monitorDataset) == 0 or len(officialDataset) == 0:
+        raise SystemExit(
+            f"Dataset is empty: train={len(trainDataset)} monitor={len(monitorDataset)} official={len(officialDataset)}"
+        )
 
     classToIdx = trainDataset.class_to_idx
     model = buildModel(
@@ -300,7 +522,6 @@ def main() -> None:
         pretrained=bool(args.pretrained),
     ).to(device)
 
-    # 复杂逻辑说明：使用两阶段训练，先冻结骨干再解冻，可降低小样本训练初期过拟合。
     if args.freeze_epochs > 0:
         setBackboneFrozen(model=model, modelName=args.model_name, frozen=True)
 
@@ -321,16 +542,19 @@ def main() -> None:
             patience=max(1, args.early_stop_patience // 2),
         )
 
-    classWeights = classWeightsFromDataset(trainDataset).to(device)
-    criterion = nn.CrossEntropyLoss(weight=classWeights, label_smoothing=args.label_smoothing)
+    criterion = createCriterion(
+        lossType=args.loss_type,
+        labelSmoothing=args.label_smoothing,
+        focalGamma=args.focal_gamma,
+    )
 
     history: List[Dict[str, float]] = []
-    bestValLoss = float("inf")
-    bestValAcc = 0.0
+    bestDevValLoss = float("inf")
+    bestDevValAcc = 0.0
     bestEpoch = 0
     noImproveEpochs = 0
     startTime = time.perf_counter()
-    baseLr = args.learning_rate
+    baseLearningRate = args.learning_rate
 
     for epoch in range(1, args.epochs + 1):
         epochStart = time.perf_counter()
@@ -340,35 +564,40 @@ def main() -> None:
             newParameters = [
                 parameter
                 for parameter in model.parameters()
-                if parameter.requires_grad and not any(parameter is p for group in optimizer.param_groups for p in group["params"])
+                if parameter.requires_grad and not any(parameter is candidate for group in optimizer.param_groups for candidate in group["params"])
             ]
             if newParameters:
                 optimizer.add_param_group(
                     {
                         "params": newParameters,
-                        "lr": baseLr * 0.5,
+                        "lr": baseLearningRate * 0.5,
                         "weight_decay": args.weight_decay,
                     }
                 )
 
-        trainLoss, trainAcc = runEpoch(model, trainLoader, criterion, optimizer, device)
-        valLoss, valAcc = runEpoch(model, valLoader, criterion, None, device)
+        trainMetrics = runEpoch(model, loaders["train"], criterion, optimizer, device)
+        devValMetrics = runEpoch(model, loaders["monitor"], criterion, None, device)
 
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(valLoss)
+                scheduler.step(devValMetrics["loss"])
             else:
                 scheduler.step()
 
         epochDuration = time.perf_counter() - epochStart
-        lrNow = min(group["lr"] for group in optimizer.param_groups)
+        learningRateNow = min(group["lr"] for group in optimizer.param_groups)
         row = {
             "epoch": float(epoch),
-            "trainLoss": round(trainLoss, 6),
-            "trainAcc": round(trainAcc, 6),
-            "valLoss": round(valLoss, 6),
-            "valAcc": round(valAcc, 6),
-            "learningRate": round(lrNow, 8),
+            "trainLoss": round(trainMetrics["loss"], 6),
+            "trainAcc": round(trainMetrics["accuracy"], 6),
+            "trainMaxProbMean": round(trainMetrics["maxProbMean"], 6),
+            "devValLoss": round(devValMetrics["loss"], 6),
+            "devValAcc": round(devValMetrics["accuracy"], 6),
+            "devValMaxProbMean": round(devValMetrics["maxProbMean"], 6),
+            "devValWrongHighConfidenceCount": int(devValMetrics["wrongHighConfidenceCount"]),
+            "valLoss": round(devValMetrics["loss"], 6),
+            "valAcc": round(devValMetrics["accuracy"], 6),
+            "learningRate": round(learningRateNow, 8),
             "epochTimeSec": round(epochDuration, 4),
         }
         history.append(row)
@@ -377,10 +606,10 @@ def main() -> None:
         with paths["liveMetrics"].open("a", encoding="utf-8") as fileObj:
             fileObj.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-        improved = (bestValLoss - valLoss) > args.early_stop_min_delta
+        improved = (bestDevValLoss - devValMetrics["loss"]) > args.early_stop_min_delta
         if improved:
-            bestValLoss = valLoss
-            bestValAcc = valAcc
+            bestDevValLoss = devValMetrics["loss"]
+            bestDevValAcc = devValMetrics["accuracy"]
             bestEpoch = epoch
             noImproveEpochs = 0
             saveCheckpoint(
@@ -391,8 +620,8 @@ def main() -> None:
                 imageSize=args.image_size,
                 history=history,
                 bestEpoch=bestEpoch,
-                bestValLoss=bestValLoss,
-                bestValAcc=bestValAcc,
+                bestDevValLoss=bestDevValLoss,
+                bestDevValAcc=bestDevValAcc,
             )
         else:
             noImproveEpochs += 1
@@ -405,23 +634,25 @@ def main() -> None:
             imageSize=args.image_size,
             history=history,
             bestEpoch=bestEpoch,
-            bestValLoss=bestValLoss if bestEpoch > 0 else valLoss,
-            bestValAcc=bestValAcc if bestEpoch > 0 else valAcc,
+            bestDevValLoss=bestDevValLoss if bestEpoch > 0 else devValMetrics["loss"],
+            bestDevValAcc=bestDevValAcc if bestEpoch > 0 else devValMetrics["accuracy"],
         )
         saveCurve(history=history, outputPath=paths["curveLive"])
 
         elapsed = time.perf_counter() - startTime
-        avgEpochSec = elapsed / epoch
-        etaSec = max(0.0, avgEpochSec * (args.epochs - epoch))
+        averageEpochSec = elapsed / epoch
         progress = {
             "currentEpoch": epoch,
             "totalEpochs": args.epochs,
             "bestEpoch": bestEpoch,
-            "bestValLoss": round(bestValLoss, 6) if bestEpoch > 0 else None,
-            "bestValAcc": round(bestValAcc, 6) if bestEpoch > 0 else None,
+            "bestDevValLoss": round(bestDevValLoss, 6) if bestEpoch > 0 else None,
+            "bestDevValAcc": round(bestDevValAcc, 6) if bestEpoch > 0 else None,
+            "bestValLoss": round(bestDevValLoss, 6) if bestEpoch > 0 else None,
+            "bestValAcc": round(bestDevValAcc, 6) if bestEpoch > 0 else None,
             "noImproveEpochs": noImproveEpochs,
-            "etaSec": round(etaSec, 2),
+            "etaSec": round(max(0.0, averageEpochSec * (args.epochs - epoch)), 2),
             "status": "running",
+            "monitorSplit": resolvedSplits["monitor"],
         }
         saveJson(paths["progress"], progress)
 
@@ -432,7 +663,7 @@ def main() -> None:
                         "event": "early_stop",
                         "epoch": epoch,
                         "bestEpoch": bestEpoch,
-                        "bestValLoss": round(bestValLoss, 6),
+                        "bestDevValLoss": round(bestDevValLoss, 6),
                     },
                     ensure_ascii=False,
                 )
@@ -449,11 +680,26 @@ def main() -> None:
             imageSize=args.image_size,
             history=history,
             bestEpoch=max(1, len(history)),
-            bestValLoss=history[-1]["valLoss"] if history else 0.0,
-            bestValAcc=history[-1]["valAcc"] if history else 0.0,
+            bestDevValLoss=history[-1]["devValLoss"] if history else 0.0,
+            bestDevValAcc=history[-1]["devValAcc"] if history else 0.0,
         )
 
+    bestModel, idxToClass = loadCheckpointModel(paths["best"], device)
+    officialMetrics = evaluateDetailed(
+        model=bestModel,
+        loader=loaders["official"],
+        criterion=criterion,
+        idxToClass=idxToClass,
+        device=device,
+    )
+
     saveCurve(history=history, outputPath=paths["curve"])
+
+    classDistribution = {
+        "train": countSamplesByClass(trainDataset),
+        "dev-val": countSamplesByClass(monitorDataset),
+        "official-val": countSamplesByClass(officialDataset),
+    }
 
     summary = {
         "device": str(device),
@@ -464,31 +710,53 @@ def main() -> None:
         "learningRate": args.learning_rate,
         "weightDecay": args.weight_decay,
         "labelSmoothing": args.label_smoothing,
+        "lossType": args.loss_type,
+        "focalGamma": args.focal_gamma,
+        "balancedSampler": bool(args.balancedSampler),
         "scheduler": args.scheduler,
         "augmentLevel": args.augment_level,
         "modelName": args.model_name,
         "pretrained": bool(args.pretrained),
         "freezeEpochs": args.freeze_epochs,
         "trainSamples": len(trainDataset),
-        "valSamples": len(valDataset),
+        "devValSamples": len(monitorDataset),
+        "officialValSamples": len(officialDataset),
+        "valSamples": len(monitorDataset),
         "classToIdx": classToIdx,
+        "classDistribution": classDistribution,
+        "monitorSplit": resolvedSplits["monitor"],
+        "officialSplit": resolvedSplits["official"],
         "totalTrainingSec": round(totalTrainingSec, 4),
         "bestEpoch": bestEpoch,
-        "bestValLoss": round(bestValLoss, 6) if bestEpoch > 0 else None,
-        "bestValAcc": round(bestValAcc, 6) if bestEpoch > 0 else None,
-        "lastValLoss": history[-1]["valLoss"] if history else None,
-        "lastValAcc": history[-1]["valAcc"] if history else None,
+        "bestDevValLoss": round(bestDevValLoss, 6) if bestEpoch > 0 else None,
+        "bestDevValAcc": round(bestDevValAcc, 6) if bestEpoch > 0 else None,
+        "bestValLoss": round(bestDevValLoss, 6) if bestEpoch > 0 else None,
+        "bestValAcc": round(bestDevValAcc, 6) if bestEpoch > 0 else None,
+        "lastDevValLoss": history[-1]["devValLoss"] if history else None,
+        "lastDevValAcc": history[-1]["devValAcc"] if history else None,
+        "lastValLoss": history[-1]["devValLoss"] if history else None,
+        "lastValAcc": history[-1]["devValAcc"] if history else None,
+        "officialValLoss": round(float(officialMetrics["loss"]), 6),
+        "officialValAcc": round(float(officialMetrics["accuracy"]), 6),
+        "officialMacroF1": round(float(officialMetrics["macroF1"]), 6),
+        "officialEce": round(float(officialMetrics["ece"]), 6),
+        "maxProbMean": round(float(officialMetrics["maxProbMean"]), 6),
+        "wrongHighConfidenceCount": int(officialMetrics["wrongHighConfidenceCount"]),
         "generalizationGapAtBest": (
-            round(history[max(0, bestEpoch - 1)]["valLoss"] - history[max(0, bestEpoch - 1)]["trainLoss"], 6)
+            round(history[max(0, bestEpoch - 1)]["devValLoss"] - history[max(0, bestEpoch - 1)]["trainLoss"], 6)
             if bestEpoch > 0
             else None
+        ),
+        "lossGapReason": describeLossGapReason(
+            trainSamples=len(trainDataset),
+            monitorSamples=len(monitorDataset),
+            officialSamples=len(officialDataset),
         ),
     }
 
     saveJson(paths["summary"], summary)
     paths["history"].write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # 保持旧接口兼容，避免已有脚本失效。
     torch.save(torch.load(paths["last"], map_location="cpu"), paths["legacyOutput"])
     paths["legacyHistory"].write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
     saveJson(paths["legacySummary"], summary)
@@ -498,11 +766,17 @@ def main() -> None:
         "currentEpoch": len(history),
         "totalEpochs": args.epochs,
         "bestEpoch": bestEpoch,
-        "bestValLoss": round(bestValLoss, 6) if bestEpoch > 0 else None,
-        "bestValAcc": round(bestValAcc, 6) if bestEpoch > 0 else None,
+        "bestDevValLoss": round(bestDevValLoss, 6) if bestEpoch > 0 else None,
+        "bestDevValAcc": round(bestDevValAcc, 6) if bestEpoch > 0 else None,
+        "bestValLoss": round(bestDevValLoss, 6) if bestEpoch > 0 else None,
+        "bestValAcc": round(bestDevValAcc, 6) if bestEpoch > 0 else None,
+        "officialValLoss": round(float(officialMetrics["loss"]), 6),
+        "officialValAcc": round(float(officialMetrics["accuracy"]), 6),
         "noImproveEpochs": noImproveEpochs,
         "etaSec": 0.0,
         "status": "succeeded",
+        "monitorSplit": resolvedSplits["monitor"],
+        "officialSplit": resolvedSplits["official"],
     }
     saveJson(paths["progress"], progressFinal)
 

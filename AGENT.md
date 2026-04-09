@@ -496,3 +496,72 @@
 4. 额外链路验证（防止主线回归）：
 	- `mobilenetv3-small` 在合成数据上训练 2 epoch 成功。
 	- `evaluate.py --checkpoint /tmp/swarm-v3-synthetic/best.pt` 成功产出评估结果。
+
+## 2026-04-09（V3.1：双验证集监控与摘要自动加载）
+
+### 1) 本轮目标
+
+解决当前 `train loss` 持续下降但 `val loss` 长期高位波动的问题，并同步补齐：
+
+1. 双验证集训练监控：
+	- `dev-val` 用于早停、调参、实时曲线。
+	- `official-val` 用于最终真实性评估。
+2. 前端启动后自动读取 `manifest.json`。
+3. VS Code demo 复合启动不再自动打开浏览器。
+
+### 2) 代码改动摘要
+
+1. `ml-module/data/prepare_visdrone.py`
+	- `official-val` 模式改为输出三套目录：
+		- `train/`
+		- `dev-val/`
+		- `official-val/`
+	- 新增 `--dev-val-size-per-class`，默认用于生成平衡监控集。
+	- `manifest.json` 新增：
+		- `monitorSplit`
+		- `devValCounts`
+		- `officialValCounts`
+2. `ml-module/train.py`
+	- 新增双验证集解析与回退逻辑，兼容旧 `val/` 数据。
+	- 早停、scheduler、前端实时曲线统一改为监控 `dev-val loss`。
+	- 新增：
+		- `WeightedRandomSampler`
+		- `focal loss`
+		- `maxProbMean`
+		- `wrongHighConfidenceCount`
+	- 训练完成后自动对 `official-val` 做最终评估，并把关键指标写回 `summary.json` 与 `progress.json`。
+3. `ml-module/evaluate.py`
+	- 支持 `train/dev-val/official-val/val`。
+	- 评估摘要新增过置信相关指标。
+4. `backend/app.py`
+	- 新增 `GET /api/dataset/manifest`。
+	- 训练任务支持：
+		- `lossType`
+		- `focalGamma`
+	- 训练后分别产出：
+		- `eval/dev-val`
+		- `eval/official-val`
+5. `web-demo/src/components/ml-lab.js`
+	- 页面初始化自动读取 `/api/dataset/manifest` 并渲染摘要。
+	- run 卡片区分展示：
+		- `dev-val`
+		- `official-val`
+	- 数据准备面板改为 `dev-val size per class`。
+6. `.vscode/launch.json`、`.vscode/tasks.json`
+	- 默认使用双验证集参数。
+	- demo 复合启动改为仅启动服务，不再自动拉起浏览器。
+
+### 3) 设计解释
+
+本轮的核心不是“单纯把 val loss 压低”，而是把训练监控和最终真实性评估拆开：
+
+1. `dev-val`
+	- 小而平衡，适合观察训练是否开始过拟合。
+	- 用于早停与选 `best.pt`。
+2. `official-val`
+	- 保留官方原始分布，更接近真实部署难度。
+	- loss 往往更高，但更能说明模型在真实分布下的稳定性。
+
+这样做之后，你在课堂上可以明确说：
+
+> 训练阶段用平衡验证集做模型选择，最终再用官方全量验证集做真实性评估。这是工程上常见的做法，避免把“调参集”和“报告集”混在一起。

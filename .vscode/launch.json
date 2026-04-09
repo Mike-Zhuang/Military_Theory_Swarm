@@ -58,7 +58,7 @@
       "justMyCode": true
     },
     {
-      "name": "ML: Prepare VisDrone (Official Val)",
+      "name": "ML: Prepare VisDrone (Dual Validation)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/ml-module/data/prepare_visdrone.py",
@@ -80,8 +80,8 @@
         "data/visdrone-ready",
         "--subset-size-per-class",
         "900",
-        "--val-subset-size-per-class",
-        "0"
+        "--dev-val-size-per-class",
+        "360"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
@@ -107,6 +107,10 @@
         "0.0001",
         "--label-smoothing",
         "0.05",
+        "--loss-type",
+        "focal",
+        "--focal-gamma",
+        "1.5",
         "--freeze-epochs",
         "3",
         "--scheduler",
@@ -119,6 +123,10 @@
         "medium",
         "--image-size",
         "128",
+        "--monitor-split",
+        "dev-val",
+        "--official-split",
+        "official-val",
         "--output",
         "runs/dev/checkpoints/tiny-cnn.pt"
       ],
@@ -135,7 +143,7 @@
         "--checkpoint",
         "runs/dev/checkpoints/best.pt",
         "--calibration-dir",
-        "data/visdrone-ready/val",
+        "data/visdrone-ready/official-val",
         "--emit-class-confidence",
         "../sim-core/class-confidence.json"
       ],
@@ -154,7 +162,7 @@
         "--data-dir",
         "data/visdrone-ready",
         "--split",
-        "val",
+        "official-val",
         "--output-dir",
         "runs/dev/eval"
       ],
@@ -217,11 +225,10 @@
   ],
   "compounds": [
     {
-      "name": "Demo: Serve and Open",
+      "name": "Demo: Services Only",
       "configurations": [
         "Backend: FastAPI",
-        "Web: Static Server",
-        "Web: Open Demo"
+        "Web: Static Server"
       ]
     }
   ]

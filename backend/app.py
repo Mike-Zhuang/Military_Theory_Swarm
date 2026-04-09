@@ -64,6 +64,7 @@ class DatasetPrepareRequest(BaseModel):
     sourceImagesDir: str = ""
     sourceAnnotationsDir: str = ""
     subsetSizePerClass: int = Field(default=900, ge=120)
+    devValSizePerClass: int = Field(default=360, ge=60, le=5000)
     valSubsetSizePerClass: int = Field(default=0, ge=0, le=20000)
     valRatio: float = Field(default=0.2, gt=0.05, lt=0.5)
     useIgnoredAsDecoy: bool = False
@@ -81,6 +82,8 @@ class TrainJobRequest(BaseModel):
     freezeEpochs: int = Field(default=3, ge=0, le=50)
     weightDecay: float = Field(default=1e-4, ge=0.0, le=0.1)
     labelSmoothing: float = Field(default=0.05, ge=0.0, le=0.4)
+    lossType: Literal["cross-entropy", "focal"] = "focal"
+    focalGamma: float = Field(default=1.5, ge=0.0, le=5.0)
     scheduler: Literal["none", "cosine", "plateau"] = "cosine"
     earlyStopPatience: int = Field(default=8, ge=1, le=50)
     earlyStopMinDelta: float = Field(default=1e-3, ge=0.0, le=1.0)
@@ -93,7 +96,7 @@ class TrainJobRequest(BaseModel):
 class EvaluateJobRequest(BaseModel):
     runId: str
     dataDir: str = str(DEFAULT_DATASET_DIR)
-    split: Literal["train", "val"] = "val"
+    split: Literal["train", "dev-val", "official-val", "val"] = "official-val"
     batchSize: int = Field(default=64, ge=8, le=256)
     numWorkers: int = Field(default=0, ge=0, le=8)
 
@@ -283,6 +286,8 @@ def detectPathsByRun(runId: str) -> Dict[str, Path]:
     progress = checkpointDir / "progress.json"
     classConfidence = runDir / "class-confidence.json"
     evalDir = runDir / "eval"
+    evalOfficialDir = evalDir / "official-val"
+    evalDevDir = evalDir / "dev-val"
     sampleGrid = runDir / "sample-grid.png"
     if not history.exists():
         history = checkpointDir / "tiny-cnn.history.json"
@@ -304,6 +309,8 @@ def detectPathsByRun(runId: str) -> Dict[str, Path]:
         "progress": progress,
         "classConfidence": classConfidence,
         "evalDir": evalDir,
+        "evalOfficialDir": evalOfficialDir,
+        "evalDevDir": evalDevDir,
         "sampleGrid": sampleGrid,
         "manifest": runDir / "artifacts.json",
     }
@@ -331,9 +338,11 @@ def renderArtifactManifest(runId: str) -> Dict[str, Any]:
         "progress": existsUrl(paths["progress"]),
         "classConfidence": existsUrl(paths["classConfidence"]),
         "sampleGrid": existsUrl(paths["sampleGrid"]),
-        "evaluationSummary": existsUrl(paths["evalDir"] / "evaluation-summary.json"),
-        "confusionMatrixCsv": existsUrl(paths["evalDir"] / "confusion-matrix.csv"),
-        "confusionMatrixPng": existsUrl(paths["evalDir"] / "confusion-matrix.png"),
+        "evaluationSummary": existsUrl(paths["evalOfficialDir"] / "evaluation-summary.json") or existsUrl(paths["evalDir"] / "evaluation-summary.json"),
+        "confusionMatrixCsv": existsUrl(paths["evalOfficialDir"] / "confusion-matrix.csv") or existsUrl(paths["evalDir"] / "confusion-matrix.csv"),
+        "confusionMatrixPng": existsUrl(paths["evalOfficialDir"] / "confusion-matrix.png") or existsUrl(paths["evalDir"] / "confusion-matrix.png"),
+        "devEvaluationSummary": existsUrl(paths["evalDevDir"] / "evaluation-summary.json"),
+        "officialEvaluationSummary": existsUrl(paths["evalOfficialDir"] / "evaluation-summary.json"),
     }
     ensureDir(paths["runDir"])
     paths["manifest"].write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -380,6 +389,8 @@ def runDatasetPrepare(job: JobRecord) -> Dict[str, Any]:
         params.splitMode,
         "--subset-size-per-class",
         str(params.subsetSizePerClass),
+        "--dev-val-size-per-class",
+        str(params.devValSizePerClass),
         "--val-subset-size-per-class",
         str(params.valSubsetSizePerClass),
         "--val-ratio",
@@ -442,7 +453,9 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
     ensureDir(paths["checkpointDir"])
 
     dataDir = resolvePath(params.dataDir)
-    if not (dataDir / "train").exists() or not (dataDir / "val").exists():
+    monitorDir = dataDir / "dev-val" if (dataDir / "dev-val").exists() else dataDir / "val"
+    officialDir = dataDir / "official-val" if (dataDir / "official-val").exists() else monitorDir
+    if not (dataDir / "train").exists() or not monitorDir.exists():
         raise RuntimeError(f"Dataset directory is incomplete: {dataDir}")
 
     trainCommand = [
@@ -466,6 +479,10 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
         str(params.weightDecay),
         "--label-smoothing",
         str(params.labelSmoothing),
+        "--loss-type",
+        params.lossType,
+        "--focal-gamma",
+        str(params.focalGamma),
         "--scheduler",
         params.scheduler,
         "--early-stop-patience",
@@ -476,6 +493,10 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
         params.augmentLevel,
         "--image-size",
         str(params.imageSize),
+        "--monitor-split",
+        monitorDir.name,
+        "--official-split",
+        officialDir.name,
         "--output",
         str(paths["checkpointDir"] / "tiny-cnn.pt"),
         "--output-dir",
@@ -493,7 +514,7 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
         "--checkpoint",
         str(bestCheckpoint),
         "--calibration-dir",
-        str(dataDir / "val"),
+        str(officialDir),
         "--emit-class-confidence",
         str(paths["classConfidence"]),
     ]
@@ -505,7 +526,7 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
         "--data-dir",
         str(dataDir),
         "--split",
-        "val",
+        officialDir.name,
         "--output",
         str(paths["sampleGrid"]),
     ]
@@ -520,15 +541,33 @@ def runTrain(job: JobRecord) -> Dict[str, Any]:
             "--data-dir",
             str(dataDir),
             "--split",
-            "val",
+            "dev-val" if monitorDir.name == "dev-val" else "val",
             "--batch-size",
             str(params.batchSize),
             "--num-workers",
             str(params.numWorkers),
             "--output-dir",
-            str(paths["evalDir"]),
+            str(paths["evalDevDir"]),
         ]
         runCommand(evalCommand, ML_DIR, job)
+
+        officialEvalCommand = [
+            pythonBin(),
+            "evaluate.py",
+            "--checkpoint",
+            str(bestCheckpoint),
+            "--data-dir",
+            str(dataDir),
+            "--split",
+            officialDir.name,
+            "--batch-size",
+            str(params.batchSize),
+            "--num-workers",
+            str(params.numWorkers),
+            "--output-dir",
+            str(paths["evalOfficialDir"]),
+        ]
+        runCommand(officialEvalCommand, ML_DIR, job)
 
     artifactManifest = renderArtifactManifest(runId)
     return {
@@ -544,6 +583,12 @@ def runEvaluate(job: JobRecord) -> Dict[str, Any]:
     if not paths["checkpoint"].exists():
         raise RuntimeError(f"Checkpoint not found for run: {params.runId}")
 
+    outputDir = paths["evalDir"]
+    if params.split in {"dev-val", "val"}:
+        outputDir = paths["evalDevDir"]
+    elif params.split == "official-val":
+        outputDir = paths["evalOfficialDir"]
+
     command = [
         pythonBin(),
         "evaluate.py",
@@ -558,7 +603,7 @@ def runEvaluate(job: JobRecord) -> Dict[str, Any]:
         "--num-workers",
         str(params.numWorkers),
         "--output-dir",
-        str(paths["evalDir"]),
+        str(outputDir),
     ]
     runCommand(command, ML_DIR, job)
 
@@ -644,6 +689,18 @@ async def health() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/dataset/manifest")
+async def datasetManifest() -> Dict[str, Any]:
+    manifestPath = DEFAULT_DATASET_DIR / "manifest.json"
+    if not manifestPath.exists():
+        raise HTTPException(status_code=404, detail=f"Dataset manifest not found: {manifestPath}")
+    payload = json.loads(manifestPath.read_text(encoding="utf-8"))
+    return {
+        "datasetDir": str(DEFAULT_DATASET_DIR),
+        "manifest": payload,
+    }
+
+
 @app.post("/api/dataset/prepare")
 async def prepareDataset(request: DatasetPrepareRequest) -> Dict[str, Any]:
     job = await jobManager.submit("dataset_prepare", request.model_dump())
@@ -697,8 +754,12 @@ async def queryJob(jobId: str) -> Dict[str, Any]:
                 summaryPayload = json.loads(summaryPath.read_text(encoding="utf-8"))
                 bestSnapshot = {
                     "bestEpoch": summaryPayload.get("bestEpoch"),
+                    "bestDevValLoss": summaryPayload.get("bestDevValLoss"),
+                    "bestDevValAcc": summaryPayload.get("bestDevValAcc"),
                     "bestValLoss": summaryPayload.get("bestValLoss"),
                     "bestValAcc": summaryPayload.get("bestValAcc"),
+                    "officialValLoss": summaryPayload.get("officialValLoss"),
+                    "officialValAcc": summaryPayload.get("officialValAcc"),
                     "lastValLoss": summaryPayload.get("lastValLoss"),
                     "lastValAcc": summaryPayload.get("lastValAcc"),
                 }

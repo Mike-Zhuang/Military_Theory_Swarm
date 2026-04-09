@@ -28,7 +28,7 @@ def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate model and export confusion matrix artifacts")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data-dir", type=str, default="data/generated")
-    parser.add_argument("--split", type=str, default="val", choices=["train", "val"])
+    parser.add_argument("--split", type=str, default="official-val", choices=["train", "dev-val", "official-val", "val"])
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--output-dir", type=str, default="reports/eval")
@@ -45,6 +45,14 @@ def buildLoader(
     mean: List[float],
     std: List[float],
 ) -> Tuple[DataLoader, Dict[int, str]]:
+    splitDir = dataDir / split
+    if not splitDir.exists() and split == "val":
+        if (dataDir / "official-val").exists():
+            splitDir = dataDir / "official-val"
+            split = "official-val"
+        elif (dataDir / "dev-val").exists():
+            splitDir = dataDir / "dev-val"
+            split = "dev-val"
     transform = transforms.Compose(
         [
             transforms.Resize((imageSize, imageSize)),
@@ -52,7 +60,7 @@ def buildLoader(
             transforms.Normalize(mean=mean, std=std),
         ]
     )
-    dataset = datasets.ImageFolder(root=str(dataDir / split), transform=transform)
+    dataset = datasets.ImageFolder(root=str(splitDir), transform=transform)
     loader = DataLoader(dataset, batch_size=batchSize, shuffle=False, num_workers=numWorkers)
     idxToClass = {idx: className for className, idx in dataset.class_to_idx.items()}
     return loader, idxToClass
@@ -130,6 +138,8 @@ def evaluate(
     correctness: List[int] = []
     totalCount = 0
     totalCorrect = 0
+    totalConfidence = 0.0
+    wrongHighConfidenceCount = 0
 
     with torch.no_grad():
         for images, labels in loader:
@@ -138,6 +148,8 @@ def evaluate(
             logits = model(images)
             probs = torch.softmax(logits, dim=1)
             confidenceTensor, predictedTensor = probs.max(dim=1)
+            totalConfidence += float(confidenceTensor.sum().item())
+            wrongHighConfidenceCount += int(((predictedTensor != labels) & (confidenceTensor >= 0.9)).sum().item())
 
             for actualIdx, predictedIdx, confidence in zip(
                 labels.cpu().tolist(),
@@ -190,6 +202,8 @@ def evaluate(
         "overallAccuracy": round(totalCorrect / max(1, totalCount), 4),
         "macroF1": round(macroF1, 4),
         "ece": round(ece, 4),
+        "maxProbMean": round(totalConfidence / max(1, totalCount), 4),
+        "wrongHighConfidenceCount": wrongHighConfidenceCount,
         "perClass": perClass,
         "confusionMatrix": confusion,
         "modelName": checkpoint.get("modelName", "tiny-cnn"),

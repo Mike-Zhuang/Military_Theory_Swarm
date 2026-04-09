@@ -30,7 +30,7 @@ function generalizationAlert(liveMetrics) {
   if (recent.length < 4) {
     return "";
   }
-  const [a, b, c, d] = recent.map((item) => Number(item.valLoss));
+  const [a, b, c, d] = recent.map((item) => Number(item.devValLoss ?? item.valLoss));
   if (Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(c) && Number.isFinite(d) && b > a && c > b && d > c) {
     return "连续 3 轮 val loss 上升，建议立即早停并检查增强/正则参数。";
   }
@@ -115,8 +115,8 @@ export function createMlLab({
           <input id="subset-size" type="number" min="120" step="20" value="900" />
         </div>
         <div>
-          <label for="val-subset-size">每类 val 样本上限</label>
-          <input id="val-subset-size" type="number" min="0" step="20" value="0" />
+          <label for="dev-val-size">每类 dev-val 样本上限</label>
+          <input id="dev-val-size" type="number" min="60" step="20" value="360" />
         </div>
       </div>
       <div class="control-group">
@@ -257,7 +257,7 @@ export function createMlLab({
   const valImagesDirInput = container.querySelector("#val-images-dir");
   const valAnnDirInput = container.querySelector("#val-ann-dir");
   const subsetSizeInput = container.querySelector("#subset-size");
-  const valSubsetSizeInput = container.querySelector("#val-subset-size");
+  const devValSizeInput = container.querySelector("#dev-val-size");
   const useIgnoredDecoyInput = container.querySelector("#use-ignored-decoy");
   const modelNameSelect = container.querySelector("#model-name");
   const augmentLevelSelect = container.querySelector("#augment-level");
@@ -345,7 +345,8 @@ export function createMlLab({
       ["history", artifacts.history],
       ["summary", artifacts.summary],
       ["classConfidence", artifacts.classConfidence],
-      ["evaluationSummary", artifacts.evaluationSummary],
+      ["officialEvaluationSummary", artifacts.officialEvaluationSummary || artifacts.evaluationSummary],
+      ["devEvaluationSummary", artifacts.devEvaluationSummary],
       ["confusionMatrixCsv", artifacts.confusionMatrixCsv],
     ].filter(([, value]) => Boolean(value));
 
@@ -366,13 +367,16 @@ export function createMlLab({
     }
     const outputCounts = summaryPayload.outputCounts || {};
     const trainCounts = outputCounts.train || {};
-    const valCounts = outputCounts.val || {};
+    const devValCounts = outputCounts["dev-val"] || outputCounts.val || {};
+    const officialValCounts = outputCounts["official-val"] || {};
     const quality = summaryPayload.labelQuality || {};
 
     datasetSummaryPanel.innerHTML = `
       <div><b>splitMode:</b> ${summaryPayload.splitMode || "-"}</div>
       <div><b>train 输出:</b> vehicle=${trainCounts.vehicle || 0}, civilian=${trainCounts["civilian-object"] || 0}, decoy=${trainCounts.decoy || 0}</div>
-      <div><b>val 输出:</b> vehicle=${valCounts.vehicle || 0}, civilian=${valCounts["civilian-object"] || 0}, decoy=${valCounts.decoy || 0}</div>
+      <div><b>dev-val 输出:</b> vehicle=${devValCounts.vehicle || 0}, civilian=${devValCounts["civilian-object"] || 0}, decoy=${devValCounts.decoy || 0}</div>
+      <div><b>official-val 输出:</b> vehicle=${officialValCounts.vehicle || 0}, civilian=${officialValCounts["civilian-object"] || 0}, decoy=${officialValCounts.decoy || 0}</div>
+      <div><b>监控验证集:</b> ${summaryPayload.monitorSplit || "dev-val"}</div>
       <div><b>标签质量:</b> ignoredUsed=${quality.ignoredUsedCount || 0}, ignoredSkipped=${quality.ignoredSkippedCount || 0}, backgroundNegative=${quality.backgroundNegativeCount || 0}</div>
     `;
   }
@@ -391,9 +395,10 @@ export function createMlLab({
       <div><b>runId:</b> ${run.runId}</div>
       <div><b>device:</b> ${summary.device || "-"}</div>
       <div><b>模型:</b> ${summary.modelName || "-"}</div>
-      <div><b>样本规模:</b> train=${summary.trainSamples || 0}, val=${summary.valSamples || 0}</div>
-      <div><b>最佳:</b> epoch=${summary.bestEpoch || "-"}, valLoss=${summary.bestValLoss ?? "-"}, valAcc=${summary.bestValAcc ?? "-"}</div>
-      <div><b>最后:</b> valLoss=${summary.lastValLoss ?? "-"}, valAcc=${summary.lastValAcc ?? "-"}</div>
+      <div><b>样本规模:</b> train=${summary.trainSamples || 0}, dev-val=${summary.devValSamples || summary.valSamples || 0}, official-val=${summary.officialValSamples || 0}</div>
+      <div><b>训练监控:</b> best dev-val loss=${summary.bestDevValLoss ?? summary.bestValLoss ?? "-"}, best dev-val acc=${summary.bestDevValAcc ?? summary.bestValAcc ?? "-"}</div>
+      <div><b>最终评估:</b> official loss=${summary.officialValLoss ?? "-"}, official acc=${summary.officialValAcc ?? "-"}, macro-F1=${summary.officialMacroF1 ?? "-"}</div>
+      <div><b>解释:</b> ${summary.lossGapReason || "训练期用平衡 dev-val 监控，最终用官方全量验证集评估。"}</div>
       <div><b>训练时长:</b> 总计 ${totalTrainingSec.toFixed(2)}s / 每轮 ${avgEpochSec.toFixed(2)}s</div>
     `;
   }
@@ -435,7 +440,16 @@ export function createMlLab({
     if (!progress || !progress.currentEpoch) {
       return "";
     }
-    return ` | epoch ${progress.currentEpoch}/${progress.totalEpochs} | best=${progress.bestValLoss ?? "-"} | noImprove=${progress.noImproveEpochs ?? 0} | ETA=${progress.etaSec ?? "-"}s`;
+    return ` | epoch ${progress.currentEpoch}/${progress.totalEpochs} | best-dev=${progress.bestDevValLoss ?? progress.bestValLoss ?? "-"} | noImprove=${progress.noImproveEpochs ?? 0} | ETA=${progress.etaSec ?? "-"}s`;
+  }
+
+  async function loadDatasetManifest() {
+    try {
+      const payload = await api("/api/dataset/manifest");
+      renderDatasetSummary(payload.manifest || null);
+    } catch (error) {
+      datasetSummaryPanel.textContent = "未发现已准备数据集，可直接点击“准备/校验数据集”。";
+    }
   }
 
   function startPolling(jobId) {
@@ -509,7 +523,7 @@ export function createMlLab({
           valImagesDir: valImagesDirInput.value.trim(),
           valAnnotationsDir: valAnnDirInput.value.trim(),
           subsetSizePerClass: safeNumber(subsetSizeInput.value, 900),
-          valSubsetSizePerClass: safeNumber(valSubsetSizeInput.value, 0),
+          devValSizePerClass: safeNumber(devValSizeInput.value, 360),
           useIgnoredAsDecoy: Boolean(useIgnoredDecoyInput.checked),
         }),
       });
@@ -616,6 +630,7 @@ export function createMlLab({
   });
 
   setLogs([]);
+  loadDatasetManifest().catch(() => {});
   refreshRuns().catch((error) => {
     setJobStatus(`init runs failed: ${parseError(error)}`);
   });
