@@ -383,3 +383,28 @@
 1. `node --check web-demo/src/main.js web-demo/src/components/explain-panel-v2.js`
 2. `python3 -m compileall web-demo/src`
 3. `./scripts/verify.sh`（6/6 全部通过）
+
+## 本轮追加改动（2026-04-09，第九次迭代，日志面板横向撑破修复）
+
+### 1) 问题描述
+
+1. 用户反馈：点击 run 后，“任务状态与日志”区域出现超长单行，导致横向撑大整个页面布局。
+
+### 2) 修复动作
+
+1. `web-demo/src/styles.css`
+	- `.panel` 增加 `min-width: 0`，避免 grid 子项按内容最小宽度撑破布局。
+	- `.metric-card` 增加 `min-width: 0`，避免卡片内容挤压外层。
+	- `.summary-block`、`.status-line` 增加换行策略（`overflow-wrap: anywhere` + `word-break: break-word`）。
+	- `.job-log` 增加：
+		- `white-space: pre-wrap`
+		- `overflow-wrap: anywhere`
+		- `word-break: break-word`
+		- `max-width: 100%`
+	  以保留换行语义且防止长 token 横向溢出。
+
+### 3) 本轮验证
+
+已执行并通过：
+
+1. `./scripts/verify.sh`（6/6 全部通过）

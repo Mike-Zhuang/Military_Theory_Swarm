@@ -91,6 +91,7 @@ h1 {
 
 .panel {
   padding: 12px;
+  min-width: 0;
 }
 
 .canvas-panel {
@@ -233,6 +234,7 @@ input[type="checkbox"] {
   padding: 10px;
   margin-bottom: 10px;
   background: #fbfdff;
+  min-width: 0;
 }
 
 .metric-value {
@@ -343,16 +345,21 @@ input[type="checkbox"] {
   line-height: 1.45;
   display: grid;
   gap: 3px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .status-line {
   color: var(--ink-normal);
   font-size: 13px;
   padding: 2px 0 8px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .job-log {
   max-height: 220px;
+  max-width: 100%;
   overflow: auto;
   background: #132634;
   border: 1px solid #264155;
@@ -362,6 +369,9 @@ input[type="checkbox"] {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .artifact-links {
