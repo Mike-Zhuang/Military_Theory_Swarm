@@ -8,7 +8,7 @@ export class MetricsBoard {
     const activeTargets = frame.targets.filter((target) => target.active).length;
 
     this.container.innerHTML = `
-      <h3 class="section-title">Metrics Board</h3>
+      <h3 class="section-title">指标面板</h3>
       <div class="metric-card">
         <div class="metric-label">当前策略</div>
         <div class="metric-value">${runName}</div>
@@ -54,7 +54,7 @@ export class MetricsBoard {
     const secondaryActiveTargets = secondary.frame.targets.filter((target) => target.active).length;
 
     this.container.innerHTML = `
-      <h3 class="section-title">Metrics Board</h3>
+      <h3 class="section-title">指标面板</h3>
       <div class="metric-card">
         <div class="metric-label">双视图同步帧</div>
         <div class="metric-value">${frameIndex} / ${maxFrame}</div>

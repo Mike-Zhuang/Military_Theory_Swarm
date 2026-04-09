@@ -216,3 +216,69 @@
 
 1. 当前环境无法访问外网下载数据集时，`prepare_visdrone.py --download` 会受限，可通过本地提供 `images/annotations` 目录绕过。
 2. 下一步优先在真实 VisDrone 子集上跑一轮完整前端链路，确认前端在线训练体验和时延表现。
+
+## 本轮追加改动（2026-04-09，第四次迭代，V2.1 实施）
+
+### 1) VisDrone 数据链路升级（train+val 双源）
+
+1. 重构 `ml-module/data/prepare_visdrone.py`：
+	- 新增 `--split-mode official-val|auto-split`。
+	- 新增 `--train-images-dir/--train-annotations-dir`。
+	- 新增 `--val-images-dir/--val-annotations-dir`。
+	- 新增 `--val-subset-size-per-class`（`0` 表示 val 全量）。
+	- 保留旧参数 `--source-images-dir/--source-annotations-dir` 兼容。
+2. `manifest.json` 统计增强：
+	- source 级别统计（image/annotation/缺失标注）。
+	- 过滤统计（small/invalid/unknown）。
+	- 类别映射与类别直方图（可用于课堂答辩）。
+3. 已用本地真实数据验证：
+	- `VisDrone2019-DET-train`：`6471/6471`；
+	- `VisDrone2019-DET-val`：`548/548`；
+	- `official-val` 模式可成功产出 `data/visdrone-ready/manifest.json`。
+
+### 2) 后端接口扩展
+
+1. `backend/app.py` 的 `DatasetPrepareRequest` 增加：
+	- `splitMode`
+	- `trainImagesDir/trainAnnotationsDir`
+	- `valImagesDir/valAnnotationsDir`
+	- `valSubsetSizePerClass`
+2. `runDatasetPrepare` 支持以上参数透传到 `prepare_visdrone.py`，并保持旧字段兼容。
+
+### 3) 前端教学化重构（去“AI 味”）
+
+1. 视觉风格重构为“课堂简洁风 + 深色军工元素”：
+	- 重写 `web-demo/src/styles.css`，降低背景噪声，强化可读性与信息层级。
+2. 新增本地 SVG 图标系统：
+	- `web-demo/src/components/icon-set.js`。
+3. 重构 `ML 在线实验台`：
+	- 4 步流程卡（准备数据 -> 训练 -> 评估 -> 应用仿真）。
+	- 可配置 `official-val/auto-split` 与 train/val 目录。
+	- 新增“数据准备摘要”与“run 元信息”展示（设备、样本量、总时长、每轮时长）。
+4. 重构图例说明区：
+	- 增加“推荐演示顺序”和“常见问题自诊断”。
+
+### 4) Git 与验证流程强化
+
+1. `.gitignore` 收敛：
+	- 直接忽略 `web-demo/public/generated/`。
+	- 新增 `.tmp/`/`tmp/` 忽略。
+2. `scripts/verify.sh` 升级为 6 步门禁：
+	- compileall
+	- 后端健康检查（函数级）
+	- 前端静态资源检查
+	- 场景生成
+	- 实验矩阵 + 图表
+	- ML 训练/评估 smoke test（临时目录，不污染仓库）
+3. VS Code 调试入口更新：
+	- `ML: Prepare VisDrone (Official Val)` 配置新增；
+	- 训练/评估默认路径切换到 `data/visdrone-ready` 与 `runs/dev`。
+
+### 5) 本轮验证结果
+
+已执行并通过：
+
+1. `python3 -m compileall backend sim-core ml-module docs`
+2. `node --check`（`main.js/ml-lab.js/control-panel.js/explain-panel.js/icon-set.js`）
+3. 真实数据准备（`prepare_visdrone.py --split-mode official-val ...`）
+4. `./scripts/verify.sh`（6/6 全部通过）

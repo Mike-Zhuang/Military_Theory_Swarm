@@ -1,3 +1,5 @@
+import { iconSvg } from "./icon-set.js";
+
 export function createControlPanel({
   container,
   scenarioOptions,
@@ -12,7 +14,12 @@ export function createControlPanel({
   onReset,
 }) {
   const panelHtml = `
-    <h3 class="section-title">Control Panel</h3>
+    <h3 class="section-title section-title-with-icon">${iconSvg("guide")} <span>仿真控制台</span></h3>
+
+    <div class="guide-strip">
+      <div class="guide-title">先看什么？</div>
+      <div class="guide-content">先选场景，再开启双视图对照，最后拖动时间轴定位关键事件。</div>
+    </div>
 
     <div class="control-group">
       <label for="scenario-select">演示场景</label>

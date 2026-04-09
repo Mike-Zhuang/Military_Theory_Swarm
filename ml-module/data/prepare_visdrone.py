@@ -4,15 +4,17 @@ import argparse
 import json
 import random
 import zipfile
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import requests
 from PIL import Image
 
 VEHICLE_CATEGORIES = {4, 5, 6, 9, 10}
 CIVILIAN_CATEGORIES = {1, 2, 3, 7, 8}
+DECOY_CATEGORIES = {0}
 
 
 @dataclass
@@ -31,10 +33,53 @@ class ParsedBox:
     category: int
 
 
+@dataclass
+class SourceStats:
+    imageCount: int = 0
+    annotationCount: int = 0
+    missingAnnotationCount: int = 0
+    totalBoxCount: int = 0
+    filteredSmallCount: int = 0
+    filteredInvalidCount: int = 0
+    filteredUnknownCategoryCount: int = 0
+    backgroundCropCount: int = 0
+    classBoxCount: Dict[str, int] | None = None
+    categoryHistogram: Dict[str, int] | None = None
+
+    def __post_init__(self) -> None:
+        if self.classBoxCount is None:
+            self.classBoxCount = {
+                "vehicle": 0,
+                "civilian-object": 0,
+                "decoy": 0,
+            }
+        if self.categoryHistogram is None:
+            self.categoryHistogram = {}
+
+    def toDict(self) -> Dict[str, Any]:
+        return {
+            "imageCount": self.imageCount,
+            "annotationCount": self.annotationCount,
+            "missingAnnotationCount": self.missingAnnotationCount,
+            "totalBoxCount": self.totalBoxCount,
+            "filteredSmallCount": self.filteredSmallCount,
+            "filteredInvalidCount": self.filteredInvalidCount,
+            "filteredUnknownCategoryCount": self.filteredUnknownCategoryCount,
+            "backgroundCropCount": self.backgroundCropCount,
+            "classBoxCount": self.classBoxCount,
+            "categoryHistogram": self.categoryHistogram,
+        }
+
+
 def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare VisDrone subset for classification training")
     parser.add_argument("--raw-dir", type=str, default="data/visdrone/raw")
     parser.add_argument("--output-dir", type=str, default="data/visdrone-ready")
+    parser.add_argument("--split-mode", type=str, default="official-val", choices=["official-val", "auto-split"])
+    parser.add_argument("--train-images-dir", type=str, default="")
+    parser.add_argument("--train-annotations-dir", type=str, default="")
+    parser.add_argument("--val-images-dir", type=str, default="")
+    parser.add_argument("--val-annotations-dir", type=str, default="")
     parser.add_argument("--source-images-dir", type=str, default="")
     parser.add_argument("--source-annotations-dir", type=str, default="")
     parser.add_argument("--archive-path", type=str, default="")
@@ -45,6 +90,7 @@ def parseArgs() -> argparse.Namespace:
         default="https://github.com/VisDrone/VisDrone-Dataset/releases/download/v1.0/VisDrone2019-DET-train.zip",
     )
     parser.add_argument("--subset-size-per-class", type=int, default=900)
+    parser.add_argument("--val-subset-size-per-class", type=int, default=0)
     parser.add_argument("--val-ratio", type=float, default=0.2)
     parser.add_argument("--min-box-size", type=int, default=16)
     parser.add_argument("--background-crops-per-image", type=int, default=2)
@@ -78,7 +124,7 @@ def extractArchive(archivePath: Path, rawDir: Path) -> None:
         zipFile.extractall(rawDir)
 
 
-def guessSourceDirs(rawDir: Path) -> Tuple[Path, Path]:
+def guessTrainSourceDirs(rawDir: Path) -> Tuple[Path, Path]:
     candidates = [
         (
             rawDir / "VisDrone2019-DET-train" / "images",
@@ -90,8 +136,28 @@ def guessSourceDirs(rawDir: Path) -> Tuple[Path, Path]:
         if imagesDir.exists() and annDir.exists():
             return imagesDir, annDir
     raise RuntimeError(
-        "Unable to locate source images/annotations directory. "
-        "Use --source-images-dir and --source-annotations-dir explicitly."
+        "Unable to locate VisDrone train images/annotations directory. "
+        "Use --train-images-dir and --train-annotations-dir explicitly."
+    )
+
+
+def guessValSourceDirs(rawDir: Path) -> Tuple[Path, Path]:
+    candidates = [
+        (
+            rawDir / "VisDrone2019-DET-val" / "images",
+            rawDir / "VisDrone2019-DET-val" / "annotations",
+        ),
+        (
+            rawDir / "val" / "images",
+            rawDir / "val" / "annotations",
+        ),
+    ]
+    for imagesDir, annDir in candidates:
+        if imagesDir.exists() and annDir.exists():
+            return imagesDir, annDir
+    raise RuntimeError(
+        "Unable to locate VisDrone val images/annotations directory. "
+        "Use --val-images-dir and --val-annotations-dir explicitly."
     )
 
 
@@ -146,32 +212,41 @@ def collectCandidates(
     minBoxSize: int,
     backgroundPerImage: int,
     rng: random.Random,
-) -> Dict[str, List[CropCandidate]]:
+) -> Tuple[Dict[str, List[CropCandidate]], SourceStats]:
     grouped: Dict[str, List[CropCandidate]] = {
         "vehicle": [],
         "civilian-object": [],
         "decoy": [],
     }
+    stats = SourceStats()
 
     for imagePath in sorted(imagesDir.glob("*.jpg")):
+        stats.imageCount += 1
         annPath = annDir / f"{imagePath.stem}.txt"
         if not annPath.exists():
+            stats.missingAnnotationCount += 1
             continue
+        stats.annotationCount += 1
 
         with Image.open(imagePath) as imageObj:
             imageWidth, imageHeight = imageObj.size
 
         boxes = parseAnnotationFile(annPath)
+        stats.totalBoxCount += len(boxes)
         occupied: List[Tuple[int, int, int, int]] = []
 
         for box in boxes:
+            categoryKey = str(box.category)
+            stats.categoryHistogram[categoryKey] = stats.categoryHistogram.get(categoryKey, 0) + 1
             if box.width < minBoxSize or box.height < minBoxSize:
+                stats.filteredSmallCount += 1
                 continue
             left = max(0, box.left)
             top = max(0, box.top)
             right = min(imageWidth, left + box.width)
             bottom = min(imageHeight, top + box.height)
             if right - left < minBoxSize or bottom - top < minBoxSize:
+                stats.filteredInvalidCount += 1
                 continue
 
             bbox = (left, top, right, bottom)
@@ -179,25 +254,31 @@ def collectCandidates(
 
             if box.category in VEHICLE_CATEGORIES:
                 grouped["vehicle"].append(CropCandidate(imagePath=imagePath, bbox=bbox, className="vehicle"))
+                stats.classBoxCount["vehicle"] += 1
             elif box.category in CIVILIAN_CATEGORIES:
                 grouped["civilian-object"].append(
                     CropCandidate(imagePath=imagePath, bbox=bbox, className="civilian-object")
                 )
-            elif box.category == 0:
+                stats.classBoxCount["civilian-object"] += 1
+            elif box.category in DECOY_CATEGORIES:
                 grouped["decoy"].append(CropCandidate(imagePath=imagePath, bbox=bbox, className="decoy"))
+                stats.classBoxCount["decoy"] += 1
+            else:
+                stats.filteredUnknownCategoryCount += 1
 
-        grouped["decoy"].extend(
-            randomBackgroundCandidates(
-                imagePath=imagePath,
-                width=imageWidth,
-                height=imageHeight,
-                occupied=occupied,
-                samples=backgroundPerImage,
-                rng=rng,
-            )
+        backgroundCandidates = randomBackgroundCandidates(
+            imagePath=imagePath,
+            width=imageWidth,
+            height=imageHeight,
+            occupied=occupied,
+            samples=backgroundPerImage,
+            rng=rng,
         )
+        grouped["decoy"].extend(backgroundCandidates)
+        stats.backgroundCropCount += len(backgroundCandidates)
+        stats.classBoxCount["decoy"] += len(backgroundCandidates)
 
-    return grouped
+    return grouped, stats
 
 
 def chooseSubset(
@@ -226,6 +307,19 @@ def splitTrainVal(
         output["train"][className] = items[:splitIdx]
         output["val"][className] = items[splitIdx:]
     return output
+
+
+def selectedCountByClass(items: Dict[str, List[CropCandidate]]) -> Dict[str, int]:
+    return {className: len(classItems) for className, classItems in items.items()}
+
+
+def sourcePayload(name: str, imagesDir: Path, annDir: Path, stats: SourceStats) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "imagesDir": str(imagesDir),
+        "annotationsDir": str(annDir),
+        "stats": stats.toDict(),
+    }
 
 
 def saveCrops(outputDir: Path, splitItems: Dict[str, Dict[str, List[CropCandidate]]]) -> Dict[str, Dict[str, int]]:
@@ -271,28 +365,100 @@ def main() -> None:
         print("Extracting archive...")
         extractArchive(archivePath, rawDir)
 
+    splitMode = args.split_mode
+    sources: Dict[str, Dict[str, Any]] = {}
+    splitItems: Dict[str, Dict[str, List[CropCandidate]]]
+    selectedCounts: Dict[str, Dict[str, int]]
+    candidateCounts: Dict[str, Dict[str, int]]
+    valGrouped: Dict[str, List[CropCandidate]] | None = None
+
     if args.source_images_dir and args.source_annotations_dir:
-        imagesDir = Path(args.source_images_dir)
-        annDir = Path(args.source_annotations_dir)
+        # 兼容旧参数：自动切分模式下旧参数等价于 train 输入目录。
+        trainImagesDir = Path(args.source_images_dir)
+        trainAnnDir = Path(args.source_annotations_dir)
+    elif args.train_images_dir and args.train_annotations_dir:
+        trainImagesDir = Path(args.train_images_dir)
+        trainAnnDir = Path(args.train_annotations_dir)
     else:
-        imagesDir, annDir = guessSourceDirs(rawDir)
+        trainImagesDir, trainAnnDir = guessTrainSourceDirs(rawDir)
 
-    if not imagesDir.exists() or not annDir.exists():
-        raise RuntimeError(f"Source data dirs not found: images={imagesDir} annotations={annDir}")
+    if not trainImagesDir.exists() or not trainAnnDir.exists():
+        raise RuntimeError(f"Train source dirs not found: images={trainImagesDir} annotations={trainAnnDir}")
 
-    print(f"Source images: {imagesDir}")
-    print(f"Source annotations: {annDir}")
+    print(f"Train source images: {trainImagesDir}")
+    print(f"Train source annotations: {trainAnnDir}")
 
-    grouped = collectCandidates(
-        imagesDir=imagesDir,
-        annDir=annDir,
+    trainGrouped, trainStats = collectCandidates(
+        imagesDir=trainImagesDir,
+        annDir=trainAnnDir,
         minBoxSize=args.min_box_size,
         backgroundPerImage=args.background_crops_per_image,
         rng=rng,
     )
+    sources["train"] = sourcePayload("train", trainImagesDir, trainAnnDir, trainStats)
 
-    selected = chooseSubset(grouped, subsetSizePerClass=args.subset_size_per_class, rng=rng)
-    splitItems = splitTrainVal(selected, valRatio=args.val_ratio)
+    if splitMode == "official-val":
+        if args.val_images_dir and args.val_annotations_dir:
+            valImagesDir = Path(args.val_images_dir)
+            valAnnDir = Path(args.val_annotations_dir)
+        else:
+            valImagesDir, valAnnDir = guessValSourceDirs(rawDir)
+
+        if not valImagesDir.exists() or not valAnnDir.exists():
+            raise RuntimeError(f"Val source dirs not found: images={valImagesDir} annotations={valAnnDir}")
+
+        print(f"Val source images: {valImagesDir}")
+        print(f"Val source annotations: {valAnnDir}")
+
+        valGrouped, valStats = collectCandidates(
+            imagesDir=valImagesDir,
+            annDir=valAnnDir,
+            minBoxSize=args.min_box_size,
+            backgroundPerImage=args.background_crops_per_image,
+            rng=random.Random(args.seed + 97),
+        )
+        sources["val"] = sourcePayload("val", valImagesDir, valAnnDir, valStats)
+
+        trainSelected = chooseSubset(
+            grouped=trainGrouped,
+            subsetSizePerClass=args.subset_size_per_class,
+            rng=random.Random(args.seed + 17),
+        )
+        if args.val_subset_size_per_class > 0:
+            valSelected = chooseSubset(
+                grouped=valGrouped,
+                subsetSizePerClass=args.val_subset_size_per_class,
+                rng=random.Random(args.seed + 41),
+            )
+        else:
+            valSelected = {className: list(items) for className, items in valGrouped.items()}
+
+        splitItems = {
+            "train": trainSelected,
+            "val": valSelected,
+        }
+        candidateCounts = {
+            "train": selectedCountByClass(trainGrouped),
+            "val": selectedCountByClass(valGrouped),
+        }
+        selectedCounts = {
+            "train": selectedCountByClass(trainSelected),
+            "val": selectedCountByClass(valSelected),
+        }
+    else:
+        trainSelected = chooseSubset(
+            grouped=trainGrouped,
+            subsetSizePerClass=args.subset_size_per_class,
+            rng=random.Random(args.seed + 17),
+        )
+        splitItems = splitTrainVal(trainSelected, valRatio=args.val_ratio)
+        candidateCounts = {
+            "train": selectedCountByClass(trainGrouped),
+        }
+        selectedCounts = {
+            "train": selectedCountByClass(splitItems["train"]),
+            "val": selectedCountByClass(splitItems["val"]),
+        }
 
     ensureDir(outputDir)
     clearOutput(outputDir)
@@ -300,15 +466,28 @@ def main() -> None:
 
     payload = {
         "dataset": "VisDrone-Subset",
-        "sourceImagesDir": str(imagesDir),
-        "sourceAnnotationsDir": str(annDir),
+        "splitMode": splitMode,
+        "generatedAt": datetime.now().isoformat(timespec="seconds"),
+        "sources": sources,
         "subsetSizePerClass": args.subset_size_per_class,
+        "valSubsetSizePerClass": args.val_subset_size_per_class,
         "valRatio": args.val_ratio,
         "seed": args.seed,
-        "candidateCounts": {key: len(value) for key, value in grouped.items()},
-        "selectedCounts": {key: len(value) for key, value in selected.items()},
+        "candidateCounts": candidateCounts,
+        "selectedCounts": selectedCounts,
         "outputCounts": counts,
         "classes": ["vehicle", "civilian-object", "decoy"],
+        "mappingRules": {
+            "vehicle": sorted(VEHICLE_CATEGORIES),
+            "civilian-object": sorted(CIVILIAN_CATEGORIES),
+            "decoy": sorted(DECOY_CATEGORIES),
+            "decoyExtra": "background hard negatives",
+        },
+        "filters": {
+            "minBoxSize": args.min_box_size,
+            "backgroundCropsPerImage": args.background_crops_per_image,
+            "ignoredUnknownCategory": True,
+        },
     }
     (outputDir / "manifest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

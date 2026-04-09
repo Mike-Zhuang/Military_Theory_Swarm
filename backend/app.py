@@ -25,6 +25,10 @@ RUNS_DIR = ML_DIR / "runs"
 GENERATED_SCENARIO_DIR = WEB_PUBLIC_DIR / "generated"
 DEFAULT_DATASET_DIR = ML_DIR / "data" / "visdrone-ready"
 DEFAULT_RAW_DIR = ML_DIR / "data" / "visdrone" / "raw"
+DEFAULT_TRAIN_IMAGES_DIR = DEFAULT_RAW_DIR / "VisDrone2019-DET-train" / "images"
+DEFAULT_TRAIN_ANNOTATIONS_DIR = DEFAULT_RAW_DIR / "VisDrone2019-DET-train" / "annotations"
+DEFAULT_VAL_IMAGES_DIR = DEFAULT_RAW_DIR / "VisDrone2019-DET-val" / "images"
+DEFAULT_VAL_ANNOTATIONS_DIR = DEFAULT_RAW_DIR / "VisDrone2019-DET-val" / "annotations"
 
 STATUS_VALUES: List[Literal["queued", "running", "succeeded", "failed", "cancelled"]] = [
     "queued",
@@ -48,9 +52,15 @@ class DatasetPrepareRequest(BaseModel):
     archivePath: str = ""
     rawDir: str = str(DEFAULT_RAW_DIR)
     outputDir: str = str(DEFAULT_DATASET_DIR)
+    splitMode: Literal["official-val", "auto-split"] = "official-val"
+    trainImagesDir: str = str(DEFAULT_TRAIN_IMAGES_DIR)
+    trainAnnotationsDir: str = str(DEFAULT_TRAIN_ANNOTATIONS_DIR)
+    valImagesDir: str = str(DEFAULT_VAL_IMAGES_DIR)
+    valAnnotationsDir: str = str(DEFAULT_VAL_ANNOTATIONS_DIR)
     sourceImagesDir: str = ""
     sourceAnnotationsDir: str = ""
     subsetSizePerClass: int = Field(default=900, ge=120)
+    valSubsetSizePerClass: int = Field(default=0, ge=0, le=20000)
     valRatio: float = Field(default=0.2, gt=0.05, lt=0.5)
     seed: int = 42
 
@@ -254,17 +264,39 @@ def runDatasetPrepare(job: JobRecord) -> Dict[str, Any]:
         str(rawDir),
         "--output-dir",
         str(outputDir),
+        "--split-mode",
+        params.splitMode,
         "--subset-size-per-class",
         str(params.subsetSizePerClass),
+        "--val-subset-size-per-class",
+        str(params.valSubsetSizePerClass),
         "--val-ratio",
         str(params.valRatio),
         "--seed",
         str(params.seed),
     ]
+    if params.trainImagesDir and params.trainAnnotationsDir:
+        command.extend(
+            [
+                "--train-images-dir",
+                str(resolvePath(params.trainImagesDir)),
+                "--train-annotations-dir",
+                str(resolvePath(params.trainAnnotationsDir)),
+            ]
+        )
+    if params.valImagesDir and params.valAnnotationsDir:
+        command.extend(
+            [
+                "--val-images-dir",
+                str(resolvePath(params.valImagesDir)),
+                "--val-annotations-dir",
+                str(resolvePath(params.valAnnotationsDir)),
+            ]
+        )
     if params.sourceImagesDir:
-        command.extend(["--source-images-dir", params.sourceImagesDir])
+        command.extend(["--source-images-dir", str(resolvePath(params.sourceImagesDir))])
     if params.sourceAnnotationsDir:
-        command.extend(["--source-annotations-dir", params.sourceAnnotationsDir])
+        command.extend(["--source-annotations-dir", str(resolvePath(params.sourceAnnotationsDir))])
     if params.download:
         command.append("--download")
         if params.downloadUrl:

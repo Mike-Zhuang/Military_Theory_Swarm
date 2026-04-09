@@ -1,4 +1,4 @@
-# 数据集说明（V2）
+# 数据集说明（V2.1）
 
 当前项目采用“双轨数据策略”：
 
@@ -15,21 +15,37 @@
 - `civilian-object`：`pedestrian/people/bicycle/tricycle/awning-tricycle`
 - `decoy`：`ignored-region` + 随机背景硬负样本
 
-### 处理流程
+### 处理流程（推荐：官方 train+val）
 
 ```bash
 cd ml-module
 python data/prepare_visdrone.py \
+  --split-mode official-val \
+  --raw-dir data/visdrone/raw \
+  --train-images-dir data/visdrone/raw/VisDrone2019-DET-train/images \
+  --train-annotations-dir data/visdrone/raw/VisDrone2019-DET-train/annotations \
+  --val-images-dir data/visdrone/raw/VisDrone2019-DET-val/images \
+  --val-annotations-dir data/visdrone/raw/VisDrone2019-DET-val/annotations \
+  --output-dir data/visdrone-ready \
+  --subset-size-per-class 900 \
+  --val-subset-size-per-class 0
+```
+
+可选：自动下载并解压官方训练集压缩包（仅 train）
+
+```bash
+python data/prepare_visdrone.py --download
+```
+
+如果没有官方 val，可回退到兼容模式（仅 train 自动切分）：
+
+```bash
+python data/prepare_visdrone.py \
+  --split-mode auto-split \
   --raw-dir data/visdrone/raw \
   --output-dir data/visdrone-ready \
   --subset-size-per-class 900 \
   --val-ratio 0.2
-```
-
-可选：自动下载并解压官方训练集压缩包
-
-```bash
-python data/prepare_visdrone.py --download
 ```
 
 输出目录结构：
@@ -46,6 +62,13 @@ data/visdrone-ready/
 │   └── decoy/
 └── manifest.json
 ```
+
+`manifest.json` 现包含：
+
+- `splitMode` 与数据源路径
+- train/val 原始候选数量与最终输出数量
+- 小框过滤、越界过滤、未知类别过滤统计
+- 类别映射规则（便于答辩时说明）
 
 ## 2) 合成数据保底路线
 
@@ -72,6 +95,7 @@ python render_sample_grid.py --data-dir data/visdrone-ready --split val --output
 1. 增加 `--subset-size-per-class`。
 2. 增加 `--epochs`。
 3. 在前端展示 `summary.json` 中的样本量、设备和总训练时长，解释实验成本。
+4. 使用官方 `train+val` 而不是纯合成数据，保持实验可信度。
 
 ## 5) 局限与边界
 

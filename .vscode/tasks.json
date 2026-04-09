@@ -61,15 +61,29 @@
       "group": "build"
     },
     {
-      "label": "ml: generate synthetic data",
+      "label": "ml: prepare visdrone official-val",
       "type": "shell",
       "command": "${workspaceFolder}/.venv/bin/python",
       "args": [
-        "data/synthetic-generator.py",
-        "--output",
-        "data/generated",
-        "--samples-per-class",
-        "1200"
+        "data/prepare_visdrone.py",
+        "--split-mode",
+        "official-val",
+        "--raw-dir",
+        "data/visdrone/raw",
+        "--train-images-dir",
+        "data/visdrone/raw/VisDrone2019-DET-train/images",
+        "--train-annotations-dir",
+        "data/visdrone/raw/VisDrone2019-DET-train/annotations",
+        "--val-images-dir",
+        "data/visdrone/raw/VisDrone2019-DET-val/images",
+        "--val-annotations-dir",
+        "data/visdrone/raw/VisDrone2019-DET-val/annotations",
+        "--output-dir",
+        "data/visdrone-ready",
+        "--subset-size-per-class",
+        "900",
+        "--val-subset-size-per-class",
+        "0"
       ],
       "options": {
         "cwd": "${workspaceFolder}/ml-module"
@@ -83,13 +97,13 @@
       "args": [
         "train.py",
         "--data-dir",
-        "data/generated",
+        "data/visdrone-ready",
         "--epochs",
-        "10",
+        "18",
         "--batch-size",
         "64",
         "--output",
-        "checkpoints/tiny-cnn.pt"
+        "runs/dev/checkpoints/tiny-cnn.pt"
       ],
       "options": {
         "cwd": "${workspaceFolder}/ml-module"
@@ -103,7 +117,7 @@
       "args": [
         "infer.py",
         "--checkpoint",
-        "checkpoints/tiny-cnn.pt",
+        "runs/dev/checkpoints/tiny-cnn.pt",
         "--calibration-dir",
         "data/visdrone-ready/val",
         "--emit-class-confidence",
@@ -121,13 +135,13 @@
       "args": [
         "evaluate.py",
         "--checkpoint",
-        "checkpoints/tiny-cnn.pt",
+        "runs/dev/checkpoints/tiny-cnn.pt",
         "--data-dir",
         "data/visdrone-ready",
         "--split",
         "val",
         "--output-dir",
-        "reports/eval"
+        "runs/dev/eval"
       ],
       "options": {
         "cwd": "${workspaceFolder}/ml-module"

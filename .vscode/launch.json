@@ -58,16 +58,30 @@
       "justMyCode": true
     },
     {
-      "name": "ML: Generate Synthetic Dataset",
+      "name": "ML: Prepare VisDrone (Official Val)",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/ml-module/data/synthetic-generator.py",
+      "program": "${workspaceFolder}/ml-module/data/prepare_visdrone.py",
       "cwd": "${workspaceFolder}/ml-module",
       "args": [
-        "--output",
-        "data/generated",
-        "--samples-per-class",
-        "1200"
+        "--split-mode",
+        "official-val",
+        "--raw-dir",
+        "data/visdrone/raw",
+        "--train-images-dir",
+        "data/visdrone/raw/VisDrone2019-DET-train/images",
+        "--train-annotations-dir",
+        "data/visdrone/raw/VisDrone2019-DET-train/annotations",
+        "--val-images-dir",
+        "data/visdrone/raw/VisDrone2019-DET-val/images",
+        "--val-annotations-dir",
+        "data/visdrone/raw/VisDrone2019-DET-val/annotations",
+        "--output-dir",
+        "data/visdrone-ready",
+        "--subset-size-per-class",
+        "900",
+        "--val-subset-size-per-class",
+        "0"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
@@ -80,13 +94,13 @@
       "cwd": "${workspaceFolder}/ml-module",
       "args": [
         "--data-dir",
-        "data/generated",
+        "data/visdrone-ready",
         "--epochs",
-        "10",
+        "18",
         "--batch-size",
         "64",
         "--output",
-        "checkpoints/tiny-cnn.pt"
+        "runs/dev/checkpoints/tiny-cnn.pt"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
@@ -99,7 +113,7 @@
       "cwd": "${workspaceFolder}/ml-module",
       "args": [
         "--checkpoint",
-        "checkpoints/tiny-cnn.pt",
+        "runs/dev/checkpoints/tiny-cnn.pt",
         "--calibration-dir",
         "data/visdrone-ready/val",
         "--emit-class-confidence",
@@ -116,13 +130,13 @@
       "cwd": "${workspaceFolder}/ml-module",
       "args": [
         "--checkpoint",
-        "checkpoints/tiny-cnn.pt",
+        "runs/dev/checkpoints/tiny-cnn.pt",
         "--data-dir",
         "data/visdrone-ready",
         "--split",
         "val",
         "--output-dir",
-        "reports/eval"
+        "runs/dev/eval"
       ],
       "console": "integratedTerminal",
       "justMyCode": true

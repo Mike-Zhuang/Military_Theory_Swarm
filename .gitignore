@@ -33,9 +33,13 @@ docs/.cache/
 sim-core/class-confidence.json
 
 # Scenario exports (keep one default sample)
-web-demo/public/generated/*.json
+web-demo/public/generated/
 web-demo/public/scenarios/*.json
 !web-demo/public/scenarios/demo-compare.json
 
 # VS Code local logs
 .vscode/*.log
+
+# Local temporary files
+.tmp/
+tmp/
