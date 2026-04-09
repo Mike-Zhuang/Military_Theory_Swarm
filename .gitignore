@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Virtual environments
+.venv/
+venv/
+
+# ML generated artifacts
+ml-module/data/generated/
+ml-module/checkpoints/
+ml-module/reports/
+ml-module/.matplotlib-cache/
+ml-module/.cache/
+
+# Experiment outputs
+docs/outputs/
+docs/.matplotlib-cache/
+docs/.cache/
+
+# Runtime exports
+sim-core/class-confidence.json
+
+# Scenario exports (keep one default sample)
+web-demo/public/scenarios/*.json
+!web-demo/public/scenarios/demo-compare.json
+!web-demo/public/scenarios/recon-coverage-compare.json
+!web-demo/public/scenarios/jam-recovery-compare.json
+!web-demo/public/scenarios/multi-target-allocation-compare.json
+
+# VS Code local logs
+.vscode/*.log

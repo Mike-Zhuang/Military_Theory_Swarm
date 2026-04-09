@@ -1,0 +1,171 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "sim: export compare scenario",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "simulate.py",
+        "--compare",
+        "--scenario",
+        "jam-recovery",
+        "--steps",
+        "260",
+        "--agents",
+        "32",
+        "--packet-loss",
+        "0.25",
+        "--output",
+        "../web-demo/public/scenarios/demo-compare.json"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/sim-core"
+      },
+      "group": "build"
+    },
+    {
+      "label": "sim: generate scenario pack",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "generate_scenario_pack.py",
+        "--steps",
+        "220",
+        "--agents",
+        "28",
+        "--packet-loss",
+        "0.22"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/sim-core"
+      },
+      "group": "build"
+    },
+    {
+      "label": "sim: run experiment matrix",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "run_experiments.py",
+        "--steps",
+        "180",
+        "--agents",
+        "24",
+        "--output-dir",
+        "../docs/outputs"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/sim-core"
+      },
+      "group": "build"
+    },
+    {
+      "label": "ml: generate synthetic data",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "data/synthetic-generator.py",
+        "--output",
+        "data/generated",
+        "--samples-per-class",
+        "1200"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ml-module"
+      },
+      "group": "build"
+    },
+    {
+      "label": "ml: train tiny cnn",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "train.py",
+        "--data-dir",
+        "data/generated",
+        "--epochs",
+        "10",
+        "--batch-size",
+        "64",
+        "--output",
+        "checkpoints/tiny-cnn.pt"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ml-module"
+      },
+      "group": "build"
+    },
+    {
+      "label": "ml: export class confidence",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "infer.py",
+        "--checkpoint",
+        "checkpoints/tiny-cnn.pt",
+        "--calibration-dir",
+        "data/generated/val",
+        "--emit-class-confidence",
+        "../sim-core/class-confidence.json"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ml-module"
+      },
+      "group": "build"
+    },
+    {
+      "label": "ml: evaluate validation set",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "evaluate.py",
+        "--checkpoint",
+        "checkpoints/tiny-cnn.pt",
+        "--data-dir",
+        "data/generated",
+        "--split",
+        "val",
+        "--output-dir",
+        "reports/eval"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ml-module"
+      },
+      "group": "build"
+    },
+    {
+      "label": "docs: plot metrics",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "plot_metrics.py",
+        "--csv",
+        "outputs/experiment-matrix.csv",
+        "--output-dir",
+        "outputs/figures"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/docs"
+      },
+      "group": "build"
+    },
+    {
+      "label": "web: serve demo",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": [
+        "-m",
+        "http.server",
+        "5173",
+        "--directory",
+        "web-demo"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

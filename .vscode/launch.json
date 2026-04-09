@@ -1,0 +1,176 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Sim: Compare Export",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sim-core/simulate.py",
+      "cwd": "${workspaceFolder}/sim-core",
+      "args": [
+        "--compare",
+        "--scenario",
+        "jam-recovery",
+        "--steps",
+        "260",
+        "--agents",
+        "32",
+        "--packet-loss",
+        "0.25",
+        "--output",
+        "../web-demo/public/scenarios/demo-compare.json"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Sim: Generate Scenario Pack",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sim-core/generate_scenario_pack.py",
+      "cwd": "${workspaceFolder}/sim-core",
+      "args": [
+        "--steps",
+        "220",
+        "--agents",
+        "28",
+        "--packet-loss",
+        "0.22"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Sim: Experiment Matrix",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/sim-core/run_experiments.py",
+      "cwd": "${workspaceFolder}/sim-core",
+      "args": [
+        "--steps",
+        "180",
+        "--agents",
+        "24",
+        "--output-dir",
+        "../docs/outputs"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "ML: Generate Synthetic Dataset",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml-module/data/synthetic-generator.py",
+      "cwd": "${workspaceFolder}/ml-module",
+      "args": [
+        "--output",
+        "data/generated",
+        "--samples-per-class",
+        "1200"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "ML: Train Tiny CNN",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml-module/train.py",
+      "cwd": "${workspaceFolder}/ml-module",
+      "args": [
+        "--data-dir",
+        "data/generated",
+        "--epochs",
+        "10",
+        "--batch-size",
+        "64",
+        "--output",
+        "checkpoints/tiny-cnn.pt"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "ML: Infer and Export Class Confidence",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml-module/infer.py",
+      "cwd": "${workspaceFolder}/ml-module",
+      "args": [
+        "--checkpoint",
+        "checkpoints/tiny-cnn.pt",
+        "--calibration-dir",
+        "data/generated/val",
+        "--emit-class-confidence",
+        "../sim-core/class-confidence.json"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "ML: Evaluate Validation Set",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml-module/evaluate.py",
+      "cwd": "${workspaceFolder}/ml-module",
+      "args": [
+        "--checkpoint",
+        "checkpoints/tiny-cnn.pt",
+        "--data-dir",
+        "data/generated",
+        "--split",
+        "val",
+        "--output-dir",
+        "reports/eval"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Docs: Plot Metrics",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/docs/plot_metrics.py",
+      "cwd": "${workspaceFolder}/docs",
+      "args": [
+        "--csv",
+        "outputs/experiment-matrix.csv",
+        "--output-dir",
+        "outputs/figures"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Web: Static Server",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "http.server",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "5173",
+        "--directory",
+        "web-demo"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Web: Open Demo",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/web-demo"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Demo: Serve and Open",
+      "configurations": [
+        "Web: Static Server",
+        "Web: Open Demo"
+      ]
+    }
+  ]
+}

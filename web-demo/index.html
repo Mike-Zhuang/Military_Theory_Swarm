@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Swarm Tactical Sandbox</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div class="ambient-layer" aria-hidden="true"></div>
+    <main class="app-shell">
+      <header class="hero">
+        <p class="badge">EDUCATIONAL SWARM SIM</p>
+        <h1>蜂群自主协同战术沙盘</h1>
+        <p class="hero-subtitle">
+          展示去中心化协同、抗干扰鲁棒性与轻量 ML 感知如何共同影响任务完成效率。
+        </p>
+      </header>
+
+      <section class="main-grid">
+        <aside class="panel" id="control-panel"></aside>
+        <section class="canvas-panel">
+          <canvas id="swarm-canvas" width="1000" height="700"></canvas>
+        </section>
+        <aside class="panel" id="metrics-board"></aside>
+      </section>
+
+      <footer class="hint">
+        <span>建议录屏流程：</span>
+        <span>策略切换 -> 干扰观察 -> ML 开关解释 -> 指标对照结论</span>
+      </footer>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
