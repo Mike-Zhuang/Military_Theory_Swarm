@@ -44,7 +44,7 @@ function makeFallbackScenario(reason) {
             ],
             links: [[0, 1], [1, 2]],
             events: [
-              "场景加载失败，已启用内置演示场景",
+              "启动阶段未加载到场景 JSON，已使用内置兜底场景",
               reason,
             ],
           },
@@ -52,6 +52,17 @@ function makeFallbackScenario(reason) {
       },
     ],
   };
+}
+
+function showStartupWarning(text) {
+  const footer = document.querySelector(".hint");
+  if (!footer) {
+    return;
+  }
+  const warning = document.createElement("span");
+  warning.className = "startup-warning";
+  warning.textContent = `启动提示：${text}`;
+  footer.appendChild(warning);
 }
 
 const SCENARIO_OPTIONS = [
@@ -97,41 +108,8 @@ const state = {
   lastTime: 0,
 };
 
-function showStartupWarning(text) {
-  const footer = document.querySelector(".hint");
-  if (!footer) {
-    return;
-  }
-  const warning = document.createElement("span");
-  warning.className = "startup-warning";
-  warning.textContent = `启动提示：${text}`;
-  footer.appendChild(warning);
-}
-
-async function createInitialScenario() {
-  try {
-    const loaded = await loadScenario(SCENARIO_OPTIONS[state.scenarioIndex].paths);
-    return {
-      scenario: loaded,
-      warning: "",
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      scenario: makeFallbackScenario(message),
-      warning: `未能加载 JSON 场景，当前使用内置演示。请确认通过 http 服务访问页面并检查 public/scenarios 文件。`,
-    };
-  }
-}
-
-async function bootstrap() {
-  const { scenario: initialScenario, warning } = await createInitialScenario();
-  let scenario = initialScenario;
-
-  if (warning) {
-    showStartupWarning(warning);
-  }
-
+function bootstrap() {
+  let scenario = makeFallbackScenario("页面初始化中");
   const canvas = new SwarmCanvas(document.getElementById("swarm-canvas"), scenario.metadata.world);
   const metricsBoard = new MetricsBoard(document.getElementById("metrics-board"));
 
@@ -199,22 +177,13 @@ async function bootstrap() {
       });
 
       const scenarioUrl = `${backendBaseUrl || BACKEND_BASE_URL}${payload.scenarioUrl}`;
-      scenario = await loadScenario([scenarioUrl]);
-      state.primaryRunIndex = 0;
-      state.secondaryRunIndex = Math.min(1, scenario.runs.length - 1);
-      state.frameIndex = 0;
-      state.isPlaying = true;
-
-      controls.setRunOptions(scenario.runs, 0, Math.min(1, scenario.runs.length - 1));
-      controls.setPlayState(true);
-      render();
+      const loaded = await loadScenario([scenarioUrl]);
+      applyScenario(loaded, state.scenarioIndex);
     },
   });
 
-  async function switchScenario(scenarioIndex) {
-    const selected = SCENARIO_OPTIONS[scenarioIndex];
-    const loaded = await loadScenario(selected.paths);
-    scenario = loaded;
+  function applyScenario(nextScenario, scenarioIndex) {
+    scenario = nextScenario;
     state.scenarioIndex = scenarioIndex;
     state.primaryRunIndex = 0;
     state.secondaryRunIndex = Math.min(1, scenario.runs.length - 1);
@@ -228,6 +197,19 @@ async function bootstrap() {
     controls.setScenarioIndex(scenarioIndex);
     controls.setCompareMode(state.compareMode && scenario.runs.length > 1);
     render();
+  }
+
+  async function switchScenario(scenarioIndex) {
+    const selected = SCENARIO_OPTIONS[scenarioIndex];
+    try {
+      const loaded = await loadScenario(selected.paths);
+      applyScenario(loaded, scenarioIndex);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showStartupWarning(`场景切换失败：${message}`);
+      const fallback = makeFallbackScenario(message);
+      applyScenario(fallback, scenarioIndex);
+    }
   }
 
   function currentRun(index) {
@@ -313,11 +295,19 @@ async function bootstrap() {
     requestAnimationFrame(frameLoop);
   }
 
+  async function loadInitialScenario() {
+    try {
+      const loaded = await loadScenario(SCENARIO_OPTIONS[state.scenarioIndex].paths);
+      applyScenario(loaded, state.scenarioIndex);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showStartupWarning(`场景 JSON 未就绪，已使用内置兜底场景。${message}`);
+    }
+  }
+
   render();
   requestAnimationFrame(frameLoop);
+  loadInitialScenario();
 }
 
-bootstrap().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  showStartupWarning(`主脚本初始化失败：${message}`);
-});
+bootstrap();

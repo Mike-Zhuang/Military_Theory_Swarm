@@ -309,3 +309,32 @@
 1. `node --check web-demo/src/main.js web-demo/src/components/ml-lab.js`
 2. `python3 -m compileall web-demo/src backend`
 3. `./scripts/verify.sh`（6/6 全部通过）
+
+## 本轮追加改动（2026-04-09，第六次迭代，前端“持续加载”修复）
+
+### 1) 问题描述
+
+1. 现象：页面长期停留“正在加载...”，用户体感像页面没有真正初始化。
+2. 线索：HTTP 服务日志能看到模块请求，但 UI 仍停留初始占位状态。
+
+### 2) 根因分析
+
+1. 启动流程对场景加载成功依赖较强，场景文件读取异常时，面板初始化可能被延后或表现为“长期加载”。
+2. 浏览器缓存旧版 `main.js` 可能导致用户仍命中旧逻辑（你日志中也出现了较多 304）。
+
+### 3) 修复内容
+
+1. 重构 `web-demo/src/main.js` 启动策略：
+	- 启动时先用内置 `fallback` 场景立即完成 UI 初始化，不再等待远端/文件加载。
+	- 场景异步加载成功后再覆盖显示，失败时仅提示告警，不阻塞页面可用。
+	- 场景切换失败时自动回退到内置场景并提示原因。
+2. `index.html` 增加版本化脚本地址：
+	- `./src/main.js?v=20260409-02`，强制浏览器拉取新脚本，降低旧缓存命中概率。
+
+### 4) 本轮验证结果
+
+已执行并通过：
+
+1. `node --check web-demo/src/main.js`
+2. `python3 -m compileall web-demo/src`
+3. `./scripts/verify.sh`（6/6 全部通过）
