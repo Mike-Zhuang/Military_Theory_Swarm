@@ -282,3 +282,30 @@
 2. `node --check`（`main.js/ml-lab.js/control-panel.js/explain-panel.js/icon-set.js`）
 3. 真实数据准备（`prepare_visdrone.py --split-mode official-val ...`）
 4. `./scripts/verify.sh`（6/6 全部通过）
+
+## 本轮追加改动（2026-04-09，第五次迭代，前端空白页修复）
+
+### 1) 问题与根因
+
+1. 现象：页面出现深浅色块，但多个面板无文字内容。
+2. 根因：`main.js` 初始化阶段若 `loadScenario()` 抛错，会在创建各面板前中断，导致面板保持空容器状态。
+
+### 2) 修复措施
+
+1. 重构 `web-demo/src/main.js`：
+	- 增加 `bootstrap()` 统一初始化与异常兜底。
+	- 增加 `makeFallbackScenario()`，场景 JSON 加载失败时自动切换内置演示数据。
+	- 场景路径改为 `new URL(..., import.meta.url)`，避免不同访问路径下相对路径失配。
+	- 增加启动警告提示，明确“当前使用内置演示场景”。
+2. 更新 `web-demo/index.html`：
+	- 为四个面板增加静态占位文案（即使脚本异常也不会“纯空白”）。
+3. 更新 `web-demo/src/styles.css`：
+	- 新增 `.startup-warning` 样式，确保错误提示可见。
+
+### 3) 本轮验证结果
+
+已执行并通过：
+
+1. `node --check web-demo/src/main.js web-demo/src/components/ml-lab.js`
+2. `python3 -m compileall web-demo/src backend`
+3. `./scripts/verify.sh`（6/6 全部通过）

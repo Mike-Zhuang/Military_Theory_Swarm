@@ -389,6 +389,11 @@ input[type="checkbox"] {
   padding: 0 4px;
 }
 
+.startup-warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+
 @media (max-width: 1180px) {
   .main-grid {
     grid-template-columns: 1fr;
