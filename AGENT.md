@@ -362,3 +362,24 @@
 1. `node --check`（`main/control-panel/explain-panel/ml-lab/metrics/icon-set`）
 2. `python3 -m compileall web-demo/src`
 3. `./scripts/verify.sh`（6/6 全部通过）
+
+## 本轮追加改动（2026-04-09，第八次迭代，强制模块缓存切换）
+
+### 1) 现象补充
+
+1. 用户端仍持续出现 `explain-panel.js:45 Unexpected identifier 'Backend'`。
+2. 结合日志判断：页面反复命中缓存资源，用户可能仍在执行旧模块图（旧 `main.js` -> 旧 `explain-panel.js`）。
+
+### 2) 处理方案
+
+1. 新增 `web-demo/src/components/explain-panel-v2.js`，不再复用旧入口路径。
+2. `web-demo/src/main.js` 的所有模块导入统一追加 `?v=20260409-03`，强制浏览器拉取新模块图。
+3. `web-demo/index.html` 主脚本 URL 改为 `main.js?v=20260409-03`，进一步切断旧缓存链路。
+
+### 3) 验证结果
+
+已执行并通过：
+
+1. `node --check web-demo/src/main.js web-demo/src/components/explain-panel-v2.js`
+2. `python3 -m compileall web-demo/src`
+3. `./scripts/verify.sh`（6/6 全部通过）
