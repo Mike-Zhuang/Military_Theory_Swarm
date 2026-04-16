@@ -1,9 +1,9 @@
-import { createControlPanel } from "./components/control-panel.js?v=20260409-04";
-import { createExplainPanel } from "./components/explain-panel-v2.js?v=20260409-04";
-import { createMlLab } from "./components/ml-lab.js?v=20260409-04";
-import { MetricsBoard } from "./components/metrics-board.js?v=20260409-04";
-import { SwarmCanvas } from "./components/swarm-canvas.js?v=20260409-04";
-import { loadScenario } from "./lib/scenario-loader.js?v=20260409-04";
+import { createControlPanel } from "./components/control-panel.js?v=20260416-01";
+import { createExplainPanel } from "./components/explain-panel-v2.js?v=20260416-01";
+import { createMlLab } from "./components/ml-lab.js?v=20260416-01";
+import { MetricsBoard } from "./components/metrics-board.js?v=20260416-01";
+import { SwarmCanvas } from "./components/swarm-canvas.js?v=20260416-02";
+import { loadScenario } from "./lib/scenario-loader.js?v=20260416-01";
 
 const BACKEND_BASE_URL = "http://127.0.0.1:8001";
 
@@ -125,15 +125,18 @@ function bootstrap() {
     onPrimaryRunChange: (runIndex) => {
       state.primaryRunIndex = runIndex;
       state.frameIndex = 0;
+      canvas.clearHudEvents();
       render();
     },
     onSecondaryRunChange: (runIndex) => {
       state.secondaryRunIndex = runIndex;
       state.frameIndex = 0;
+      canvas.clearHudEvents();
       render();
     },
     onCompareToggle: (enabled) => {
       state.compareMode = enabled;
+      canvas.clearHudEvents();
       render();
     },
     onPlayToggle: (isPlaying) => {
@@ -144,12 +147,14 @@ function bootstrap() {
     },
     onSeek: (frameIndex) => {
       state.frameIndex = frameIndex;
+      canvas.clearHudEvents();
       render();
     },
     onReset: () => {
       state.frameIndex = 0;
       state.isPlaying = true;
       controls.setPlayState(true);
+      canvas.clearHudEvents();
       render();
     },
   });
@@ -190,6 +195,7 @@ function bootstrap() {
     state.frameIndex = 0;
     state.isPlaying = true;
     state.lastTime = 0;
+    canvas.clearHudEvents();
 
     canvas.setWorld(scenario.metadata.world);
     controls.setRunOptions(scenario.runs, 0, Math.min(1, scenario.runs.length - 1));

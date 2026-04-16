@@ -8,41 +8,41 @@ export class MetricsBoard {
     const activeTargets = frame.targets.filter((target) => target.active).length;
 
     this.container.innerHTML = `
-      <h3 class="section-title">指标面板</h3>
+      <h3 class="section-title">Mission Metrics</h3>
       <div class="metric-card">
-        <div class="metric-label">当前策略</div>
+        <div class="metric-label">Current Strategy</div>
         <div class="metric-value">${runName}</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">覆盖率</div>
+        <div class="metric-label">Coverage</div>
         <div class="metric-value">${(summary.coverage * 100).toFixed(1)}%</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">任务完成率</div>
+        <div class="metric-label">Completion Rate</div>
         <div class="metric-value">${(summary.taskCompletionRate * 100).toFixed(1)}%</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">平均响应时间</div>
+        <div class="metric-label">Avg Response Time</div>
         <div class="metric-value">${summary.avgResponseTime.toFixed(2)} s</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">生存率</div>
+        <div class="metric-label">Survival Rate</div>
         <div class="metric-value">${(summary.survivalRate * 100).toFixed(1)}%</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">平均链路度</div>
+        <div class="metric-label">Avg Link Degree</div>
         <div class="metric-value">${summary.avgLinkDegree.toFixed(2)}</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">实时状态</div>
+        <div class="metric-label">Realtime State</div>
         <div class="metric-label">Frame: ${frame.t}/${maxFrame}</div>
         <div class="metric-label">Alive Agents: ${aliveCount}</div>
         <div class="metric-label">Active Targets: ${activeTargets}</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">解读提示</div>
-        <div class="metric-label">覆盖率高 + 响应短：协同策略更稳。</div>
-        <div class="metric-label">链路度低 + 生存率降：通信/失效压力更大。</div>
+        <div class="metric-label">Briefing Notes</div>
+        <div class="metric-label">高覆盖率 + 短响应时延：协同效率更稳定。</div>
+        <div class="metric-label">链路度下降 + 生存率下降：通信与失效压力增大。</div>
       </div>
     `;
   }
@@ -54,13 +54,13 @@ export class MetricsBoard {
     const secondaryActiveTargets = secondary.frame.targets.filter((target) => target.active).length;
 
     this.container.innerHTML = `
-      <h3 class="section-title">指标面板</h3>
+      <h3 class="section-title">Mission Metrics</h3>
       <div class="metric-card">
-        <div class="metric-label">双视图同步帧</div>
+        <div class="metric-label">Synchronized Frame</div>
         <div class="metric-value">${frameIndex} / ${maxFrame}</div>
       </div>
-      ${this.compareCard("左视图", primary.runName, primary.summary, primaryAlive, primaryActiveTargets)}
-      ${this.compareCard("右视图", secondary.runName, secondary.summary, secondaryAlive, secondaryActiveTargets)}
+      ${this.compareCard("Left View", primary.runName, primary.summary, primaryAlive, primaryActiveTargets)}
+      ${this.compareCard("Right View", secondary.runName, secondary.summary, secondaryAlive, secondaryActiveTargets)}
     `;
   }
 
@@ -69,11 +69,11 @@ export class MetricsBoard {
       <div class="metric-card">
         <div class="metric-label">${title}</div>
         <div class="metric-value">${runName}</div>
-        <div class="metric-label">完成率 ${(summary.taskCompletionRate * 100).toFixed(1)}%</div>
-        <div class="metric-label">覆盖率 ${(summary.coverage * 100).toFixed(1)}%</div>
-        <div class="metric-label">响应时间 ${summary.avgResponseTime.toFixed(2)} s</div>
-        <div class="metric-label">存活 Agent ${aliveCount}</div>
-        <div class="metric-label">剩余目标 ${activeTargets}</div>
+        <div class="metric-label">Completion ${(summary.taskCompletionRate * 100).toFixed(1)}%</div>
+        <div class="metric-label">Coverage ${(summary.coverage * 100).toFixed(1)}%</div>
+        <div class="metric-label">Response ${summary.avgResponseTime.toFixed(2)} s</div>
+        <div class="metric-label">Alive Agents ${aliveCount}</div>
+        <div class="metric-label">Remaining Targets ${activeTargets}</div>
       </div>
     `;
   }

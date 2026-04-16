@@ -3,6 +3,38 @@ export class SwarmCanvas {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.world = world;
+    this.hudEventMemory = new Map();
+    this.eventHoldSteps = 35;
+  }
+
+  clearHudEvents() {
+    this.hudEventMemory.clear();
+  }
+
+  getHeldHudEvent(frame, label) {
+    const key = label || "default";
+    const liveEvent = frame.events[0] ? frame.events[0].slice(0, 34) : "";
+    if (liveEvent) {
+      this.hudEventMemory.set(key, { text: liveEvent, step: frame.t });
+      return liveEvent;
+    }
+
+    const cached = this.hudEventMemory.get(key);
+    if (!cached) {
+      return "";
+    }
+
+    if (frame.t < cached.step) {
+      this.hudEventMemory.delete(key);
+      return "";
+    }
+
+    if (frame.t - cached.step <= this.eventHoldSteps) {
+      return cached.text;
+    }
+
+    this.hudEventMemory.delete(key);
+    return "";
   }
 
   setWorld(world) {
@@ -119,21 +151,22 @@ export class SwarmCanvas {
 
   drawHud(frame, viewport, label) {
     const { ctx, canvas } = this;
+    const hudEventText = this.getHeldHudEvent(frame, label);
     ctx.save();
-    ctx.fillStyle = "rgba(11, 30, 42, 0.78)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
     ctx.fillRect(viewport.x + 10, viewport.y + 10, 220, 56);
-    ctx.strokeStyle = "rgba(147, 206, 229, 0.3)";
+    ctx.strokeStyle = "rgba(240, 240, 250, 0.25)";
     ctx.strokeRect(viewport.x + 10, viewport.y + 10, 220, 56);
 
-    ctx.fillStyle = "#9cc6d7";
-    ctx.font = "12px IBM Plex Mono";
+    ctx.fillStyle = "#f0f0fa";
+    ctx.font = "12px D-DIN, Arial";
     ctx.fillText(label, viewport.x + 20, viewport.y + 28);
     ctx.fillText(`step: ${frame.t}`, viewport.x + 20, viewport.y + 46);
     ctx.fillText(`events: ${frame.events.length}`, viewport.x + 120, viewport.y + 46);
 
-    if (frame.events[0]) {
-      ctx.fillStyle = "rgba(244, 185, 66, 0.95)";
-      ctx.fillText(frame.events[0].slice(0, 34), viewport.x + 20, viewport.y + viewport.height - 18);
+    if (hudEventText) {
+      ctx.fillStyle = "rgba(255, 208, 111, 0.95)";
+      ctx.fillText(hudEventText, viewport.x + 20, viewport.y + viewport.height - 18);
     }
 
     ctx.restore();
@@ -145,14 +178,14 @@ export class SwarmCanvas {
     const top = viewport.y + 10;
 
     ctx.save();
-    ctx.fillStyle = "rgba(11, 30, 42, 0.78)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.72)";
     ctx.fillRect(left, top, 210, 112);
-    ctx.strokeStyle = "rgba(147, 206, 229, 0.3)";
+    ctx.strokeStyle = "rgba(240, 240, 250, 0.25)";
     ctx.strokeRect(left, top, 210, 112);
 
-    ctx.font = "11px IBM Plex Mono";
-    ctx.fillStyle = "#9cc6d7";
-    ctx.fillText("图例", left + 10, top + 16);
+    ctx.font = "11px D-DIN, Arial";
+    ctx.fillStyle = "#f0f0fa";
+    ctx.fillText("LEGEND", left + 10, top + 16);
 
     const rows = [
       ["#4ecdc4", "Agent"],
@@ -167,7 +200,7 @@ export class SwarmCanvas {
       ctx.beginPath();
       ctx.arc(left + 12, y - 3, 4, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#d5ecf6";
+      ctx.fillStyle = "#f0f0fa";
       ctx.fillText(row[1], left + 24, y);
     });
 
@@ -176,8 +209,8 @@ export class SwarmCanvas {
     ctx.moveTo(left + 10, top + 106);
     ctx.lineTo(left + 28, top + 106);
     ctx.stroke();
-    ctx.fillStyle = "#d5ecf6";
-    ctx.fillText("通信链路", left + 34, top + 109);
+    ctx.fillStyle = "#f0f0fa";
+    ctx.fillText("LINK", left + 34, top + 109);
     ctx.restore();
   }
 

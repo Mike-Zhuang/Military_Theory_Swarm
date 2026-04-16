@@ -281,7 +281,9 @@ def detectPathsByRun(runId: str) -> Dict[str, Path]:
     history = checkpointDir / "history.json"
     summary = checkpointDir / "summary.json"
     curve = checkpointDir / "curve.png"
+    curveTrain = checkpointDir / "curve-train.png"
     curveLive = checkpointDir / "curve-live.png"
+    curveLiveTrain = checkpointDir / "curve-live-train.png"
     liveMetrics = checkpointDir / "live-metrics.jsonl"
     progress = checkpointDir / "progress.json"
     classConfidence = runDir / "class-confidence.json"
@@ -304,7 +306,9 @@ def detectPathsByRun(runId: str) -> Dict[str, Path]:
         "history": history,
         "summary": summary,
         "curve": curve,
+        "curveTrain": curveTrain,
         "curveLive": curveLive,
+        "curveLiveTrain": curveLiveTrain,
         "liveMetrics": liveMetrics,
         "progress": progress,
         "classConfidence": classConfidence,
@@ -333,7 +337,9 @@ def renderArtifactManifest(runId: str) -> Dict[str, Any]:
         "history": existsUrl(paths["history"]),
         "summary": existsUrl(paths["summary"]),
         "trainingCurve": existsUrl(paths["curve"]),
+        "trainingCurveTrainOnly": existsUrl(paths["curveTrain"]),
         "trainingCurveLive": existsUrl(paths["curveLive"]),
+        "trainingCurveLiveTrainOnly": existsUrl(paths["curveLiveTrain"]),
         "liveMetrics": existsUrl(paths["liveMetrics"]),
         "progress": existsUrl(paths["progress"]),
         "classConfidence": existsUrl(paths["classConfidence"]),

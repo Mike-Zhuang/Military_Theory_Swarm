@@ -50,9 +50,10 @@ export function createMlLab({
   };
 
   container.innerHTML = `
+    <div class="ml-lab-shell">
     <h3 class="section-title section-title-with-icon">
       ${iconSvg("guide")}
-      <span>ML 在线实验台（可调参 + 可早停）</span>
+      <span>ML Mission Lab</span>
     </h3>
 
     <div class="workflow-grid">
@@ -74,6 +75,8 @@ export function createMlLab({
       </article>
     </div>
 
+    <div class="lab-divider"></div>
+
     <div class="control-group">
       <label for="backend-url">后端地址</label>
       <input id="backend-url" type="text" value="${DEFAULT_BACKEND}" />
@@ -84,7 +87,7 @@ export function createMlLab({
       <button id="refresh-runs-btn">${iconSvg("guide")} 刷新 Run 列表</button>
     </div>
 
-    <div class="metric-card">
+    <section class="lab-section">
       <div class="metric-label card-title">${iconSvg("dataset")} 数据准备参数</div>
       <div class="control-group">
         <label for="split-mode">数据划分策略</label>
@@ -128,9 +131,11 @@ export function createMlLab({
       <div class="control-group">
         <button id="prepare-btn">${iconSvg("dataset")} 准备/校验数据集</button>
       </div>
-    </div>
+    </section>
 
-    <div class="metric-card">
+    <div class="lab-divider"></div>
+
+    <section class="lab-section">
       <div class="metric-label card-title">${iconSvg("train")} 训练参数</div>
       <div class="control-group two-col">
         <div>
@@ -214,9 +219,11 @@ export function createMlLab({
         <button id="cancel-job-btn">${iconSvg("warning")} 停止当前任务</button>
         <button id="evaluate-btn">${iconSvg("evaluate")} 评估选中 Run</button>
       </div>
-    </div>
+    </section>
 
-    <div class="metric-card">
+    <div class="lab-divider"></div>
+
+    <section class="lab-section">
       <div class="metric-label card-title">${iconSvg("apply")} Run 管理与仿真注入</div>
       <div class="control-group">
         <label for="run-select">历史 Run</label>
@@ -226,27 +233,38 @@ export function createMlLab({
       <div class="control-group">
         <button id="apply-confidence-btn">${iconSvg("apply")} 将置信度应用到仿真</button>
       </div>
-    </div>
+    </section>
 
-    <div class="metric-card">
+    <div class="lab-divider"></div>
+
+    <section class="lab-section">
       <div class="metric-label card-title">${iconSvg("info")} 任务状态与日志</div>
       <div id="job-status" class="status-line">idle</div>
+      <div id="job-progress-track" class="job-progress-track" aria-label="训练进度">
+        <div id="job-progress-fill" class="job-progress-fill" style="width: 0%"></div>
+      </div>
+      <div id="job-progress-text" class="metric-label">progress: 0%</div>
       <div id="generalization-warning" class="status-warning"></div>
       <pre id="job-logs" class="job-log"></pre>
-    </div>
+    </section>
 
-    <div class="metric-card">
+    <div class="lab-divider"></div>
+
+    <section class="lab-section">
       <div class="metric-label card-title">${iconSvg("dataset")} 数据准备摘要</div>
       <div id="dataset-summary" class="summary-block">尚未准备数据。</div>
-    </div>
+    </section>
 
-    <div class="metric-card">
-      <div class="metric-label card-title">${iconSvg("evaluate")} 训练产物展示</div>
+    <div class="lab-divider"></div>
+
+    <section class="lab-section">
+      <div class="metric-label card-title">${iconSvg("evaluate")} 训练产物展示（仅训练曲线）</div>
       <div id="artifact-links" class="artifact-links"></div>
-      <img id="artifact-curve-live" class="artifact-image" alt="training curve live" />
-      <img id="artifact-curve" class="artifact-image" alt="training curve final" />
+      <img id="artifact-curve-live" class="artifact-image" alt="training curve live train-only" />
+      <img id="artifact-curve" class="artifact-image" alt="training curve final train-only" />
       <img id="artifact-confusion" class="artifact-image" alt="confusion matrix" />
       <img id="artifact-samples" class="artifact-image" alt="sample grid" />
+    </section>
     </div>
   `;
 
@@ -277,6 +295,9 @@ export function createMlLab({
   const datasetSummaryPanel = container.querySelector("#dataset-summary");
   const jobStatus = container.querySelector("#job-status");
   const generalizationWarning = container.querySelector("#generalization-warning");
+  const jobProgressTrack = container.querySelector("#job-progress-track");
+  const jobProgressFill = container.querySelector("#job-progress-fill");
+  const jobProgressText = container.querySelector("#job-progress-text");
   const jobLogs = container.querySelector("#job-logs");
   const artifactLinks = container.querySelector("#artifact-links");
   const artifactCurveLive = container.querySelector("#artifact-curve-live");
@@ -319,6 +340,24 @@ export function createMlLab({
     jobStatus.textContent = text;
   }
 
+  function setJobProgress(progress) {
+    const current = safeNumber(progress?.currentEpoch, 0);
+    const total = Math.max(1, safeNumber(progress?.totalEpochs, 0));
+    const percent = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+    const isRunning = current > 0 && total > 0;
+
+    if (!isRunning) {
+      jobProgressFill.style.width = "0%";
+      jobProgressText.textContent = "progress: 0%";
+      jobProgressTrack.classList.remove("active");
+      return;
+    }
+
+    jobProgressFill.style.width = `${percent}%`;
+    jobProgressText.textContent = `progress: ${percent}% (epoch ${current}/${total})`;
+    jobProgressTrack.classList.add("active");
+  }
+
   function setLogs(lines) {
     if (!lines || lines.length === 0) {
       jobLogs.textContent = "(暂无日志)";
@@ -354,8 +393,8 @@ export function createMlLab({
       ? entries.map(([name, path]) => `<a href="${artifactUrl(path)}" target="_blank" rel="noreferrer">${name}</a>`).join(" | ")
       : "当前 run 尚无可展示产物。";
 
-    setArtifactImage(artifactCurveLive, artifacts.trainingCurveLive || artifacts.trainingCurve);
-    setArtifactImage(artifactCurve, artifacts.trainingCurve);
+    setArtifactImage(artifactCurveLive, artifacts.trainingCurveLiveTrainOnly);
+    setArtifactImage(artifactCurve, artifacts.trainingCurveTrainOnly);
     setArtifactImage(artifactConfusion, artifacts.confusionMatrixPng);
     setArtifactImage(artifactSamples, artifacts.sampleGrid);
   }
@@ -460,6 +499,7 @@ export function createMlLab({
         const payload = await api(`/api/jobs/${jobId}`);
         const suffix = payload.runId ? ` | run=${payload.runId}` : "";
         setJobStatus(`${payload.status}${suffix}${progressText(payload.progress)}`);
+        setJobProgress(payload.progress);
         setLogs(tail(payload.logs || [], 120));
 
         if (payload.liveMetrics && payload.liveMetrics.length > 0) {
@@ -484,6 +524,9 @@ export function createMlLab({
         }
 
         if (["succeeded", "failed", "cancelled"].includes(payload.status)) {
+          if (payload.status === "succeeded") {
+            setJobProgress({ currentEpoch: 1, totalEpochs: 1 });
+          }
           stopPolling();
           await refreshRuns(payload.runId || state.activeRunId);
         }
@@ -529,6 +572,7 @@ export function createMlLab({
       });
       generalizationWarning.textContent = "";
       setJobStatus(`dataset job queued: ${payload.jobId}`);
+      setJobProgress(null);
       setLogs([`dataset prepare queued: ${payload.jobId}`]);
       startPolling(payload.jobId);
     } catch (error) {
@@ -560,6 +604,7 @@ export function createMlLab({
       });
       generalizationWarning.textContent = "";
       setJobStatus(`train job queued: ${payload.jobId}`);
+      setJobProgress(null);
       setLogs([`train queued: ${payload.jobId}`]);
       startPolling(payload.jobId);
     } catch (error) {
@@ -594,6 +639,7 @@ export function createMlLab({
         body: JSON.stringify({ runId }),
       });
       setJobStatus(`evaluate job queued: ${payload.jobId}`);
+      setJobProgress(null);
       setLogs([`evaluate queued: ${payload.jobId}`]);
       startPolling(payload.jobId);
     } catch (error) {

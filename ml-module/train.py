@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import random
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -370,7 +371,55 @@ def evaluateDetailed(
     }
 
 
-def saveCurve(history: List[Dict[str, float]], outputPath: Path) -> None:
+def supportsAnsiColor() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("TERM", "dumb").lower() == "dumb":
+        return False
+    return sys.stdout.isatty()
+
+
+def renderEpochProgressLine(
+    epoch: int,
+    totalEpochs: int,
+    trainLoss: float,
+    devValLoss: float,
+    trainAcc: float,
+    devValAcc: float,
+    learningRate: float,
+    noImproveEpochs: int,
+) -> str:
+    total = max(1, totalEpochs)
+    ratio = min(1.0, max(0.0, epoch / total))
+    barWidth = 26
+    filled = int(round(ratio * barWidth))
+    empty = barWidth - filled
+    bar = "#" * filled + "-" * empty
+
+    if supportsAnsiColor():
+        green = "\033[92m"
+        cyan = "\033[96m"
+        yellow = "\033[93m"
+        magenta = "\033[95m"
+        reset = "\033[0m"
+        return (
+            f"{green}[{bar}]{reset} "
+            f"{cyan}{epoch}/{total}{reset} "
+            f"train-loss={trainLoss:.4f} dev-loss={devValLoss:.4f} "
+            f"train-acc={trainAcc:.3f} dev-acc={devValAcc:.3f} "
+            f"{yellow}lr={learningRate:.6f}{reset} "
+            f"{magenta}no-improve={noImproveEpochs}{reset}"
+        )
+
+    return (
+        f"[{bar}] {epoch}/{total} "
+        f"train-loss={trainLoss:.4f} dev-loss={devValLoss:.4f} "
+        f"train-acc={trainAcc:.3f} dev-acc={devValAcc:.3f} "
+        f"lr={learningRate:.6f} no-improve={noImproveEpochs}"
+    )
+
+
+def saveCurve(history: List[Dict[str, float]], outputPath: Path, showDevVal: bool = True) -> None:
     if not history:
         return
 
@@ -382,7 +431,8 @@ def saveCurve(history: List[Dict[str, float]], outputPath: Path) -> None:
 
     fig, axes = plt.subplots(1, 2, figsize=(10.6, 4.2))
     axes[0].plot(epochs, trainLoss, marker="o", label="train")
-    axes[0].plot(epochs, devValLoss, marker="s", label="dev-val")
+    if showDevVal:
+        axes[0].plot(epochs, devValLoss, marker="s", label="dev-val")
     axes[0].set_title("Loss")
     axes[0].set_xlabel("Epoch")
     axes[0].set_ylabel("Cross Entropy")
@@ -390,7 +440,8 @@ def saveCurve(history: List[Dict[str, float]], outputPath: Path) -> None:
     axes[0].legend()
 
     axes[1].plot(epochs, trainAcc, marker="o", label="train")
-    axes[1].plot(epochs, devValAcc, marker="s", label="dev-val")
+    if showDevVal:
+        axes[1].plot(epochs, devValAcc, marker="s", label="dev-val")
     axes[1].set_title("Accuracy")
     axes[1].set_xlabel("Epoch")
     axes[1].set_ylabel("Accuracy")
@@ -452,7 +503,9 @@ def pickOutputPaths(args: argparse.Namespace) -> Dict[str, Path]:
         "history": checkpointDir / "history.json",
         "summary": checkpointDir / "summary.json",
         "curve": checkpointDir / "curve.png",
+        "curveTrain": checkpointDir / "curve-train.png",
         "curveLive": checkpointDir / "curve-live.png",
+        "curveLiveTrain": checkpointDir / "curve-live-train.png",
         "liveMetrics": checkpointDir / "live-metrics.jsonl",
         "progress": checkpointDir / "progress.json",
         "legacyHistory": outputPath.with_suffix(".history.json"),
@@ -601,6 +654,18 @@ def main() -> None:
             "epochTimeSec": round(epochDuration, 4),
         }
         history.append(row)
+        print(
+            renderEpochProgressLine(
+                epoch=epoch,
+                totalEpochs=args.epochs,
+                trainLoss=row["trainLoss"],
+                devValLoss=row["devValLoss"],
+                trainAcc=row["trainAcc"],
+                devValAcc=row["devValAcc"],
+                learningRate=row["learningRate"],
+                noImproveEpochs=noImproveEpochs,
+            )
+        )
         print(json.dumps(row, ensure_ascii=False))
 
         with paths["liveMetrics"].open("a", encoding="utf-8") as fileObj:
@@ -637,7 +702,8 @@ def main() -> None:
             bestDevValLoss=bestDevValLoss if bestEpoch > 0 else devValMetrics["loss"],
             bestDevValAcc=bestDevValAcc if bestEpoch > 0 else devValMetrics["accuracy"],
         )
-        saveCurve(history=history, outputPath=paths["curveLive"])
+        saveCurve(history=history, outputPath=paths["curveLive"], showDevVal=True)
+        saveCurve(history=history, outputPath=paths["curveLiveTrain"], showDevVal=False)
 
         elapsed = time.perf_counter() - startTime
         averageEpochSec = elapsed / epoch
@@ -693,7 +759,8 @@ def main() -> None:
         device=device,
     )
 
-    saveCurve(history=history, outputPath=paths["curve"])
+    saveCurve(history=history, outputPath=paths["curve"], showDevVal=True)
+    saveCurve(history=history, outputPath=paths["curveTrain"], showDevVal=False)
 
     classDistribution = {
         "train": countSamplesByClass(trainDataset),
@@ -760,7 +827,7 @@ def main() -> None:
     torch.save(torch.load(paths["last"], map_location="cpu"), paths["legacyOutput"])
     paths["legacyHistory"].write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
     saveJson(paths["legacySummary"], summary)
-    saveCurve(history=history, outputPath=paths["legacyCurve"])
+    saveCurve(history=history, outputPath=paths["legacyCurve"], showDevVal=True)
 
     progressFinal = {
         "currentEpoch": len(history),

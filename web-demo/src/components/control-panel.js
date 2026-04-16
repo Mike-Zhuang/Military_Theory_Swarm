@@ -14,22 +14,22 @@ export function createControlPanel({
   onReset,
 }) {
   const panelHtml = `
-    <h3 class="section-title section-title-with-icon">${iconSvg("guide")} <span>仿真控制台</span></h3>
+    <h3 class="section-title section-title-with-icon">${iconSvg("guide")} <span>Simulation Console</span></h3>
 
     <div class="guide-strip">
-      <div class="guide-title">先看什么？</div>
+      <div class="guide-title">Mission Tip</div>
       <div class="guide-content">先选场景，再开启双视图对照，最后拖动时间轴定位关键事件。</div>
     </div>
 
     <div class="control-group">
-      <label for="scenario-select">演示场景</label>
+      <label for="scenario-select">Scenario</label>
       <select id="scenario-select">
         ${scenarioOptions.map((item, index) => `<option value="${index}">${item.label}</option>`).join("")}
       </select>
     </div>
 
     <div class="control-group">
-      <label for="primary-run-select">主视图策略</label>
+      <label for="primary-run-select">Primary Strategy</label>
       <select id="primary-run-select">
         ${runs.map((run, index) => `<option value="${index}">${run.name}</option>`).join("")}
       </select>
@@ -37,33 +37,33 @@ export function createControlPanel({
 
     <div class="control-group">
       <label class="toggle-row" for="compare-toggle">
-        <span>双视图对照</span>
+        <span>Compare Mode</span>
         <input id="compare-toggle" type="checkbox" checked />
       </label>
     </div>
 
     <div class="control-group" id="secondary-run-group">
-      <label for="secondary-run-select">副视图策略</label>
+      <label for="secondary-run-select">Secondary Strategy</label>
       <select id="secondary-run-select">
         ${runs.map((run, index) => `<option value="${index}">${run.name}</option>`).join("")}
       </select>
     </div>
 
     <div class="control-group">
-      <label for="speed-range">播放倍率</label>
+      <label for="speed-range">Playback Speed</label>
       <input id="speed-range" type="range" min="0.5" max="3" step="0.5" value="1" />
       <small><span id="speed-value" class="timeline-value">1.0x</span></small>
     </div>
 
     <div class="control-group">
-      <label for="timeline-range">时间轴</label>
+      <label for="timeline-range">Timeline</label>
       <input id="timeline-range" type="range" min="0" max="1" step="1" value="0" />
       <small><span id="timeline-value" class="timeline-value">0 / 0</span></small>
     </div>
 
     <div class="control-group">
-      <button id="play-btn">暂停</button>
-      <button id="reset-btn">回到起点</button>
+      <button id="play-btn">Pause</button>
+      <button id="reset-btn">Reset</button>
     </div>
   `;
   container.innerHTML = panelHtml;
@@ -117,7 +117,7 @@ export function createControlPanel({
 
   playBtn.addEventListener("click", () => {
     isPlaying = !isPlaying;
-    playBtn.textContent = isPlaying ? "暂停" : "播放";
+    playBtn.textContent = isPlaying ? "Pause" : "Play";
     onPlayToggle(isPlaying);
   });
 
@@ -133,7 +133,7 @@ export function createControlPanel({
     },
     setPlayState(nextPlaying) {
       isPlaying = nextPlaying;
-      playBtn.textContent = isPlaying ? "暂停" : "播放";
+      playBtn.textContent = isPlaying ? "Pause" : "Play";
     },
     setRunOptions(nextRuns, primaryIndex = 0, secondaryIndex = 1) {
       const optionsHtml = nextRuns

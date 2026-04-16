@@ -1,42 +1,68 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>蜂群协同作战教学平台</title>
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./src/styles.css" />
-  </head>
-  <body>
-    <div class="ambient-layer" aria-hidden="true"></div>
-    <main class="app-shell">
-      <header class="hero">
-        <p class="badge">EDUCATIONAL SWARM SIMULATION</p>
-        <h1>蜂群自主协同战术沙盘 + 在线训练台</h1>
-        <p class="hero-subtitle">
-          去中心化协同、抗干扰鲁棒性与真实数据驱动的轻量 ML 实验在同一页面完成。
-        </p>
-      </header>
 
-      <section class="main-grid">
-        <aside class="panel" id="control-panel">正在加载控制面板...</aside>
-        <section class="canvas-panel">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>蜂群协同作战教学平台</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+
+<body>
+  <div class="page-atmosphere" aria-hidden="true"></div>
+
+  <header class="mission-nav">
+    <div class="nav-brand">SWARM MISSION GRID</div>
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="#scene-hero">OVERVIEW</a>
+      <a href="#scene-sandbox">SIMULATION</a>
+      <a href="#scene-lab">ML LAB</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="scene scene-hero" id="scene-hero">
+      <div class="scene-overlay" aria-hidden="true"></div>
+      <div class="scene-content hero-content">
+        <p class="scene-kicker">EDUCATIONAL SWARM AUTONOMY SYSTEM</p>
+        <h1>SWARM COORDINATION MISSION CONSOLE</h1>
+        <p class="scene-subtitle">
+          蜂群自主协同战术沙盘与在线训练台同屏联动，支持干扰恢复、策略对照与置信度注入回放。
+        </p>
+        <div class="hero-actions">
+          <a class="ghost-action" href="#scene-sandbox">ENTER SIMULATION</a>
+          <a class="ghost-action" href="#scene-lab">OPEN ML LAB</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="scene scene-sandbox" id="scene-sandbox">
+      <div class="scene-overlay" aria-hidden="true"></div>
+      <div class="scene-content sandbox-layout">
+        <aside class="hud-panel" id="control-panel">LOADING CONTROL PANEL...</aside>
+        <section class="canvas-stage" aria-label="战术沙盘画布">
           <canvas id="swarm-canvas" width="1000" height="700"></canvas>
         </section>
-        <aside class="panel" id="metrics-board">正在加载指标面板...</aside>
-      </section>
+        <aside class="hud-panel" id="metrics-board">LOADING METRICS...</aside>
+      </div>
+    </section>
 
-      <section class="secondary-grid">
-        <aside class="panel" id="explain-panel">正在加载图例说明...</aside>
-        <section class="panel" id="ml-lab-panel">正在加载 ML 在线实验台...</section>
-      </section>
+    <section class="scene scene-lab" id="scene-lab">
+      <div class="scene-overlay" aria-hidden="true"></div>
+      <div class="scene-content lab-layout">
+        <aside class="hud-panel" id="explain-panel">LOADING BRIEFING...</aside>
+        <section class="hud-panel" id="ml-lab-panel">LOADING ML LAB...</section>
+      </div>
+    </section>
+  </main>
 
-      <footer class="hint">
-        <span>演示建议：</span>
-        <span>先跑策略对照，再跑在线训练与评估，最后一键应用置信度并回放仿真。</span>
-      </footer>
-    </main>
+  <footer class="hint mission-footnote">
+    <span>DEMO FLOW:</span>
+    <span>SCENARIO COMPARE -> TRAIN OR EVALUATE -> APPLY CONFIDENCE -> REPLAY RESULT.</span>
+  </footer>
 
-    <script type="module" src="./src/main.js?v=20260409-04"></script>
-  </body>
+  <script type="module" src="./src/main.js?v=20260416-01"></script>
+</body>
+
 </html>
